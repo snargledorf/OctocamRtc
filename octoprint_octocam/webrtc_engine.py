@@ -16,6 +16,21 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _silence_pyav_swscaler_warnings() -> None:
+    """Suppresses noisy FFmpeg libswscale 'deprecated pixel format used' warnings in PyAV."""
+    try:
+        import av.logging
+
+        av.logging.set_level(av.logging.ERROR)
+        if hasattr(av.logging, "set_libav_level"):
+            av.logging.set_libav_level(av.logging.ERROR)
+    except Exception:
+        pass
+
+
+_silence_pyav_swscaler_warnings()
+
+
 @dataclass
 class EngineConfig:
     """Configuration snapshot for the WebRTC media engine."""
@@ -367,6 +382,7 @@ class FFmpegFrameFilter:
 
         import av
 
+        _silence_pyav_swscaler_warnings()
         pts = frame.pts
         time_base = frame.time_base
         sig = (frame.width, frame.height, frame.format.name)
@@ -492,6 +508,8 @@ def install_hardware_h264_encoder(
 
     import av
 
+    _silence_pyav_swscaler_warnings()
+
     if not hasattr(aiortc_h264_module, "_OriginalH264Encoder"):
         aiortc_h264_module._OriginalH264Encoder = aiortc_h264_module.H264Encoder
 
@@ -500,28 +518,43 @@ def install_hardware_h264_encoder(
     device = (vaapi_device or "/dev/dri/renderD128").strip()
     fps = max(1, int(framerate or 30))
 
-    if mode not in ("vaapi", "v4l2m2m"):
-        aiortc_h264_module.H264Encoder = base_encoder_cls
-        aiortc_codecs_module.H264Encoder = base_encoder_cls
-        return
-
     class HardwareH264Encoder(base_encoder_cls):  # type: ignore[misc, valid-type]
         def __init__(self) -> None:
             super().__init__()
-            self._hw_failed = False
+            self._hw_failed = mode not in ("vaapi", "v4l2m2m")
             self._hw_codec: Optional[Any] = None
             self._vaapi_proc: Optional[subprocess.Popen[bytes]] = None
             self._hw_dims: Optional[tuple[int, int]] = None
+            self._reformatter: Optional[Any] = None
             self._fallback_filter = FFmpegFrameFilter(
                 flip_h=vaapi_flip_h,
                 flip_v=vaapi_flip_v,
                 rotate90=vaapi_rotate90,
             )
 
+        def _reformat_frame(self, frame: Any, target_format: str) -> Any:
+            """
+            Reformats `frame` to `target_format` using a persistent `VideoReformatter`
+            so `SwsContext` is reused across frames instead of re-initialized every frame.
+            """
+            if frame.format.name == target_format:
+                return frame
+            if self._reformatter is None:
+                try:
+                    from av.video.reformatter import VideoReformatter
+
+                    self._reformatter = VideoReformatter()
+                except Exception:
+                    self._reformatter = False
+            if self._reformatter:
+                return self._reformatter.reformat(frame, format=target_format)
+            return frame.reformat(format=target_format)
+
         def _encode_frame(self, frame: Any, force_keyframe: bool):
             if self._hw_failed:
                 if mode == "vaapi" and self._fallback_filter.active:
                     frame = self._fallback_filter.transform(frame)
+                frame = self._reformat_frame(frame, "yuv420p")
                 yield from super()._encode_frame(frame, force_keyframe)
                 return
 
@@ -543,6 +576,7 @@ def install_hardware_h264_encoder(
 
             if mode == "vaapi" and self._fallback_filter.active:
                 frame = self._fallback_filter.transform(frame)
+            frame = self._reformat_frame(frame, "yuv420p")
             yield from super()._encode_frame(frame, force_keyframe)
 
         def _encode_v4l2m2m(self, frame: Any, force_keyframe: bool):
@@ -559,8 +593,7 @@ def install_hardware_h264_encoder(
                 self._hw_codec = codec
                 self._hw_dims = dims
 
-            if frame.format.name != "yuv420p":
-                frame = frame.reformat(format="yuv420p")
+            frame = self._reformat_frame(frame, "yuv420p")
             if force_keyframe:
                 frame.pict_type = av.video.frame.PictureType.I
             else:
@@ -639,9 +672,8 @@ def install_hardware_h264_encoder(
                 self._hw_dims = dims
                 self._start_vaapi_reader(self._vaapi_proc)
 
-            # VAAPI hardware decode outputs nv12 frames natively; only convert if source was not nv12
-            if frame.format.name != "nv12":
-                frame = frame.reformat(format="nv12")
+            # Reuse a single persistent VideoReformatter so SwsContext is not recreated per frame
+            frame = self._reformat_frame(frame, "nv12")
 
             raw_bytes = frame.to_ndarray().tobytes()
             assert self._vaapi_proc.stdin is not None
@@ -886,6 +918,8 @@ class WebRTCEngine:
     def _get_or_create_video_track(self, config: EngineConfig) -> Any:
         from aiortc.contrib.media import MediaPlayer, MediaRelay
 
+        _silence_pyav_swscaler_warnings()
+
         signature = (
             f"{config.stream_source}|{config.input_format}|{config.resolution}|"
             f"{config.framerate}|{config.hwaccel_mode}|{config.vaapi_device}|"
@@ -1047,6 +1081,8 @@ class WebRTCEngine:
                 )
 
         import av
+
+        _silence_pyav_swscaler_warnings()
 
         cam_hw = configure_v4l2_camera_transforms(
             stream_source=config.stream_source,

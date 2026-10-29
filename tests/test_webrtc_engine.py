@@ -8,11 +8,13 @@ from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     FFmpegFrameFilter,
     WebRTCEngine,
+    _silence_pyav_swscaler_warnings,
     apply_pil_transforms,
     build_ffmpeg_vf_filter,
     build_media_player_kwargs,
     configure_v4l2_camera_transforms,
     create_transformed_video_track,
+    install_hardware_h264_encoder,
     parse_bitrate_bps,
     probe_vaapi_support,
 )
@@ -188,6 +190,58 @@ class TestWebRTCEngine(unittest.TestCase):
 
         self.assertIs(out, fake_img)
         self.assertEqual(fake_img.transpose.call_count, 3)
+
+    def test_silence_pyav_swscaler_warnings_and_persistent_reformatter(self) -> None:
+        mock_av_logging = MagicMock()
+        mock_av_logging.ERROR = 16
+        mock_reformatter_instance = MagicMock()
+        mock_reformatter_cls = MagicMock(return_value=mock_reformatter_instance)
+        mock_av = MagicMock()
+        mock_av.logging = mock_av_logging
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "av": mock_av,
+                "av.logging": mock_av_logging,
+                "av.video.reformatter": MagicMock(VideoReformatter=mock_reformatter_cls),
+            },
+        ):
+            _silence_pyav_swscaler_warnings()
+            mock_av_logging.set_level.assert_called_with(16)
+
+            class DummyBaseEncoder:
+                target_bitrate = 2_500_000
+
+                def _encode_frame(self, frame, force_keyframe):
+                    yield b"encoded"
+
+            fake_codecs = MagicMock(H264Encoder=DummyBaseEncoder)
+            fake_h264 = MagicMock(H264Encoder=DummyBaseEncoder, spec=["H264Encoder"])
+
+            install_hardware_h264_encoder(
+                aiortc_codecs_module=fake_codecs,
+                aiortc_h264_module=fake_h264,
+                hwaccel_mode="none",
+                vaapi_device="/dev/dri/renderD128",
+                target_bitrate=2_500_000,
+                framerate=30,
+            )
+
+            encoder = fake_h264.H264Encoder()
+            frame1 = MagicMock()
+            frame1.format.name = "yuvj422p"
+            frame2 = MagicMock()
+            frame2.format.name = "yuvj422p"
+
+            list(encoder._encode_frame(frame1, False))
+            list(encoder._encode_frame(frame2, False))
+
+            # VideoReformatter is instantiated once and reused across frames
+            mock_reformatter_cls.assert_called_once()
+            self.assertEqual(mock_reformatter_instance.reformat.call_count, 2)
+            frame1.reformat.assert_not_called()
+            frame2.reformat.assert_not_called()
 
 
 if __name__ == "__main__":
