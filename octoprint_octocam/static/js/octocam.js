@@ -10,14 +10,19 @@ $(function () {
         self.candidateType = ko.observable(""); // host | srflx | relay | ""
         self.errorMessage = ko.observable("");
 
+        // Multi-stream observables
+        self.availableStreams = ko.observableArray([]);
+        self.selectedStream = ko.observable("octocam");
+        self.isLoadingStreams = ko.observable(false);
+
         // Settings diagnostic observables
         self.isTestingCloudflare = ko.observable(false);
         self.cloudflareTestOk = ko.observable(false);
         self.cloudflareTestMessage = ko.observable("");
 
-        self.isCheckingVaapi = ko.observable(false);
-        self.vaapiStatusOk = ko.observable(false);
-        self.vaapiStatusMessage = ko.observable("");
+        self.isTestingGo2rtc = ko.observable(false);
+        self.go2rtcTestOk = ko.observable(false);
+        self.go2rtcTestMessage = ko.observable("");
 
         // Editable list of static STUN/TURN servers
         self.iceServersList = ko.observableArray([]);
@@ -47,20 +52,21 @@ $(function () {
         self.connectionBadgeText = ko.pureComputed(function () {
             var state = self.connectionState();
             var cand = self.candidateType();
+            var streamName = self.selectedStream() || "Stream";
             if (state === "connected") {
+                var proto = "Direct";
                 if (cand === "relay") {
-                    return "Live (TURN Relay)";
+                    proto = "TURN Relay";
+                } else if (cand === "srflx" || cand === "prflx") {
+                    proto = "STUN";
                 }
-                if (cand === "srflx" || cand === "prflx") {
-                    return "Live (STUN)";
-                }
-                return "Live (Direct)";
+                return streamName + " (" + proto + ")";
             }
             if (state === "connecting") {
-                return "Connecting WebRTC...";
+                return "Connecting " + streamName + "...";
             }
             if (state === "error") {
-                return self.errorMessage() || "Stream Offline";
+                return self.errorMessage() || (streamName + " Offline");
             }
             return "Idle";
         });
@@ -96,6 +102,46 @@ $(function () {
                 return self.settingsViewModel.settings.plugins.octocam;
             }
             return null;
+        };
+
+        // Switch stream listener
+        self.selectedStream.subscribe(function () {
+            if (self._isVisible && self.connectionState() !== "idle") {
+                self.reconnectStream();
+            }
+        });
+
+        // ~~ Stream Discovery Helpers ~~
+
+        self.loadAvailableStreams = function () {
+            var p = self._pluginSettings();
+            var url = p && p.go2rtc_url ? p.go2rtc_url() : "http://127.0.0.1:1984";
+            self.isLoadingStreams(true);
+
+            OctoPrint.simpleApiCommand("octocam", "get_available_streams", {
+                go2rtc_url: url
+            })
+                .done(function (response) {
+                    var list = (response && response.streams) || [];
+                    self.availableStreams(list);
+                    if (list.length > 0) {
+                        var currentConfigured = (p && p.go2rtc_stream && p.go2rtc_stream()) || "";
+                        if (!currentConfigured || list.indexOf(currentConfigured) === -1) {
+                            if (p && p.go2rtc_stream) {
+                                p.go2rtc_stream(list[0]);
+                            }
+                            self.selectedStream(list[0]);
+                        } else {
+                            self.selectedStream(currentConfigured);
+                        }
+                    }
+                })
+                .fail(function () {
+                    // Non-fatal if go2rtc isn't reachable yet
+                })
+                .always(function () {
+                    self.isLoadingStreams(false);
+                });
         };
 
         // ~~ Settings UI Table Helpers ~~
@@ -185,29 +231,35 @@ $(function () {
                 });
         };
 
-        self.checkVaapiStatus = function () {
+        self.testGo2rtcConnection = function () {
             var p = self._pluginSettings();
-            var device = p && p.vaapi_device ? p.vaapi_device() : "/dev/dri/renderD128";
-            self.isCheckingVaapi(true);
-            self.vaapiStatusMessage("Probing Linux VAAPI hardware encoder on " + device + "...");
-            self.vaapiStatusOk(true);
+            var url = p && p.go2rtc_url ? p.go2rtc_url() : "http://127.0.0.1:1984";
+            var stream = p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam";
 
-            OctoPrint.simpleApiCommand("octocam", "check_vaapi", {
-                vaapi_device: device
+            self.isTestingGo2rtc(true);
+            self.go2rtcTestMessage("Connecting to go2rtc at " + url + "...");
+            self.go2rtcTestOk(true);
+
+            OctoPrint.simpleApiCommand("octocam", "test_go2rtc", {
+                go2rtc_url: url,
+                go2rtc_stream: stream
             })
                 .done(function (response) {
-                    self.vaapiStatusOk(Boolean(response.available));
-                    self.vaapiStatusMessage(response.message || "VAAPI check completed.");
+                    self.go2rtcTestOk(Boolean(response.ok));
+                    self.go2rtcTestMessage(response.message || "go2rtc connection verified.");
+                    if (response.streams && response.streams.length > 0) {
+                        self.availableStreams(response.streams);
+                    }
                 })
                 .fail(function (jqXHR) {
-                    self.vaapiStatusOk(false);
+                    self.go2rtcTestOk(false);
                     var err =
                         (jqXHR.responseJSON && jqXHR.responseJSON.error) ||
-                        "Failed to query VAAPI hardware status.";
-                    self.vaapiStatusMessage(err);
+                        "Failed to connect to go2rtc.";
+                    self.go2rtcTestMessage(err);
                 })
                 .always(function () {
-                    self.isCheckingVaapi(false);
+                    self.isTestingGo2rtc(false);
                 });
         };
 
@@ -245,25 +297,31 @@ $(function () {
             self.candidateType("");
             self.errorMessage("");
 
+            var p = self._pluginSettings();
+            var activeStream =
+                self.selectedStream() ||
+                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam");
+
             OctoPrint.simpleApiCommand("octocam", "get_ice_servers")
                 .done(function (iceConfig) {
                     var iceServers = (iceConfig && iceConfig.iceServers) || [
                         { urls: ["stun:stun.cloudflare.com:3478"] }
                     ];
                     var forceRelay = Boolean(iceConfig && iceConfig.forceTurnRelay);
-                    self._negotiatePeerConnection(videoEl, iceServers, forceRelay);
+                    self._negotiatePeerConnection(videoEl, iceServers, forceRelay, activeStream);
                 })
                 .fail(function () {
                     // Fallback to default Cloudflare STUN if endpoint fails
                     self._negotiatePeerConnection(
                         videoEl,
                         [{ urls: ["stun:stun.cloudflare.com:3478"] }],
-                        false
+                        false,
+                        activeStream
                     );
                 });
         };
 
-        self._negotiatePeerConnection = function (videoEl, iceServers, forceRelay) {
+        self._negotiatePeerConnection = function (videoEl, iceServers, forceRelay, streamName) {
             var rtcConfig = {
                 iceServers: iceServers,
                 iceTransportPolicy: forceRelay ? "relay" : "all"
@@ -272,34 +330,7 @@ $(function () {
             var pc = new RTCPeerConnection(rtcConfig);
             self._pc = pc;
 
-            var transceiver = pc.addTransceiver("video", { direction: "recvonly" });
-            if (
-                transceiver &&
-                typeof transceiver.setCodecPreferences === "function" &&
-                typeof RTCRtpReceiver !== "undefined" &&
-                typeof RTCRtpReceiver.getCapabilities === "function"
-            ) {
-                try {
-                    var caps = RTCRtpReceiver.getCapabilities("video");
-                    if (caps && Array.isArray(caps.codecs)) {
-                        var h264Codecs = [];
-                        var otherCodecs = [];
-                        caps.codecs.forEach(function (c) {
-                            var mime = (c.mimeType || "").toLowerCase();
-                            if (mime === "video/h264") {
-                                h264Codecs.push(c);
-                            } else {
-                                otherCodecs.push(c);
-                            }
-                        });
-                        if (h264Codecs.length > 0) {
-                            transceiver.setCodecPreferences(h264Codecs.concat(otherCodecs));
-                        }
-                    }
-                } catch (e) {
-                    // Ignore if browser rejects codec preference ordering
-                }
-            }
+            pc.addTransceiver("video", { direction: "recvonly" });
 
             pc.ontrack = function (event) {
                 if (event.track.kind === "video" && event.streams && event.streams[0]) {
@@ -336,7 +367,8 @@ $(function () {
                     var localDesc = pc.localDescription;
                     return OctoPrint.simpleApiCommand("octocam", "offer", {
                         sdp: localDesc.sdp,
-                        type: localDesc.type
+                        type: localDesc.type,
+                        stream: streamName
                     });
                 })
                 .then(function (answer) {
@@ -485,6 +517,11 @@ $(function () {
 
         self.onBeforeBinding = function () {
             self._loadIceServersFromSettings();
+            self.loadAvailableStreams();
+        };
+
+        self.onSettingsShown = function () {
+            self.loadAvailableStreams();
         };
 
         self.onSettingsBeforeSave = function () {
@@ -493,18 +530,20 @@ $(function () {
 
         self.onSettingsHidden = function () {
             self.cloudflareTestMessage("");
-            self.vaapiStatusMessage("");
+            self.go2rtcTestMessage("");
         };
 
         self.onEventSettingsUpdated = function () {
+            var p = self._pluginSettings();
+            if (p && p.go2rtc_stream) {
+                self.selectedStream(p.go2rtc_stream());
+            }
             if (self._isVisible) {
                 self.reconnectStream();
             }
         };
 
         self._hideUnconfiguredClassicBanner = function () {
-            // If Classic Webcam is unconfigured and showing its "? Webcam not configured..."
-            // placeholder alongside OctoCam, hide that placeholder container.
             var classicContainer = document.getElementById("webcam_plugin_classicwebcam");
             if (classicContainer && !classicContainer.querySelector("img, video")) {
                 classicContainer.style.display = "none";

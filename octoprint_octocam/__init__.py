@@ -41,11 +41,14 @@ except ImportError:  # pragma: no cover - fallback for unit testing outside Octo
     class _BaseShutdownPlugin:
         pass
 
+import requests
+
 from octoprint_octocam.turn_provider import TurnCredentialError, TurnCredentialProvider
 from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
-    probe_vaapi_support,
+    resolve_go2rtc_snapshot_url,
+    resolve_go2rtc_webrtc_url,
 )
 
 
@@ -58,7 +61,7 @@ class OctocamPlugin(
     _BaseWebcamProviderPlugin,
     _BaseShutdownPlugin,
 ):
-    """OctoPrint WebRTC Webcam Provider Plugin with STUN/TURN (Cloudflare TURN) & VAAPI."""
+    """OctoPrint WebRTC Webcam Provider Plugin powered by go2rtc with Cloudflare TURN support."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -73,27 +76,23 @@ class OctocamPlugin(
             super().initialize()  # type: ignore[misc]
         self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
-        self._logger.info("OctoCam plugin initialized (logger attached).")
+        self._logger.info("OctoCam plugin initialized (go2rtc backend).")
 
     # ~~ StartupPlugin mixin ~~
 
     def on_after_startup(self) -> None:
         self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
-        hw_mode = str(self._settings.get(["hwaccel_mode"]) or "vaapi")
-        vaapi_dev = str(self._settings.get(["vaapi_device"]) or "/dev/dri/renderD128")
-        stream_src = str(self._settings.get(["stream_source"]) or "/dev/video0")
+        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984")
+        go2rtc_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam")
         self._logger.info(
-            "[OctoCam HW] Startup configuration: stream_source='%s', hwaccel_mode='%s', vaapi_device='%s', flip_h=%s, flip_v=%s, rotate90=%s",
-            stream_src,
-            hw_mode,
-            vaapi_dev,
+            "[OctoCam] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s', flip_h=%s, flip_v=%s, rotate90=%s",
+            go2rtc_url,
+            go2rtc_stream,
             self._settings.get_boolean(["flip_h"]),
             self._settings.get_boolean(["flip_v"]),
             self._settings.get_boolean(["rotate90"]),
         )
-        if hw_mode == "vaapi":
-            probe_vaapi_support(vaapi_dev)
         try:
             default_webcam = self._settings.global_get(["webcam", "defaultWebcam"])
             classic_stream = self._settings.global_get(
@@ -115,17 +114,13 @@ class OctocamPlugin(
     def get_settings_defaults(self) -> Dict[str, Any]:
         return {
             "webcam_name": "OctoCam WebRTC",
-            "backend_mode": "aiortc",  # "aiortc" or "whep"
-            "stream_source": "/dev/video0",
-            "input_format": "auto",  # "auto", "v4l2", "mjpeg", "rtsp"
-            "resolution": "1280x720",
-            "framerate": 30,
-            "bitrate": "2500k",
-            "aspect_ratio": "16:9",  # "16:9" or "4:3"
-            "hwaccel_mode": "vaapi",  # "vaapi", "v4l2m2m", "none"
-            "vaapi_device": "/dev/dri/renderD128",
-            "whep_url": "http://127.0.0.1:8889/octocam/whep",
+            "go2rtc_url": "http://127.0.0.1:1984",
+            "go2rtc_stream": "octocam",
             "snapshot_url": "",
+            "aspect_ratio": "16:9",  # "16:9" or "4:3"
+            "flip_h": False,
+            "flip_v": False,
+            "rotate90": False,
             "cloudflare_enabled": True,
             "cloudflare_turn_key_id": "",
             "cloudflare_api_token": "",
@@ -138,9 +133,6 @@ class OctocamPlugin(
                     "credential": "",
                 }
             ],
-            "flip_h": False,
-            "flip_v": False,
-            "rotate90": False,
         }
 
     def get_settings_restricted_paths(self) -> Dict[str, List[List[str]]]:
@@ -183,11 +175,19 @@ class OctocamPlugin(
     # ~~ WebcamProviderPlugin mixin (OctoPrint 1.9+) ~~
 
     def get_webcam_configurations(self) -> Iterable[Any]:
-        display_name = str(self._settings.get(["webcam_name"]) or "OctoCam WebRTC")
+        base_display_name = str(self._settings.get(["webcam_name"]) or "OctoCam WebRTC")
         aspect_ratio_str = str(self._settings.get(["aspect_ratio"]) or "16:9")
-        stream_source = str(self._settings.get(["stream_source"]) or "/dev/video0").strip()
-        snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
-        snapshot_display = snapshot_url or f"OctoCam ({stream_source})"
+        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
+        active_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
+
+        # Query all configured streams from go2rtc so all streams are selectable in OctoPrint
+        available = self._webrtc_engine.get_available_streams(go2rtc_url)
+        streams_to_register = list(available) if available else []
+        if active_stream and active_stream not in streams_to_register:
+            streams_to_register.insert(0, active_stream)
+        if not streams_to_register:
+            streams_to_register = ["octocam"]
 
         try:
             from octoprint.schema.webcam import (
@@ -201,47 +201,89 @@ class OctocamPlugin(
                 if aspect_ratio_str == "4:3"
                 else RatioEnum.sixteen_nine
             )
-            # Flip and rotation are applied directly in the server encode/decode pipeline
-            # so the video stream and snapshots are already oriented for all devices and fullscreen.
-            return [
-                Webcam(
-                    name="octocam",
-                    displayName=display_name,
-                    flipH=False,
-                    flipV=False,
-                    rotate90=False,
-                    snapshotDisplay=snapshot_display,
-                    canSnapshot=True,
-                    compat=WebcamCompatibility(
-                        stream="webrtc",
-                        streamTimeout=15,
-                        streamRatio=ratio,
-                        snapshot=snapshot_url or "internal://octocam",
-                        snapshotTimeout=5,
-                        snapshotSslValidation=True,
-                    ),
-                    extras={
-                        "streamRatio": ratio.value if hasattr(ratio, "value") else aspect_ratio_str,
-                    },
+
+            configs = []
+            for stream in streams_to_register:
+                is_primary = (stream == active_stream)
+                cam_name = "octocam" if is_primary else f"octocam_{stream}"
+                display = (
+                    base_display_name
+                    if len(streams_to_register) == 1
+                    else f"{base_display_name} ({stream})"
                 )
-            ]
+                snap_display = (
+                    custom_snapshot_url
+                    if (custom_snapshot_url and is_primary)
+                    else resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+                )
+
+                configs.append(
+                    Webcam(
+                        name=cam_name,
+                        displayName=display,
+                        flipH=False,
+                        flipV=False,
+                        rotate90=False,
+                        snapshotDisplay=snap_display,
+                        canSnapshot=True,
+                        compat=WebcamCompatibility(
+                            stream="webrtc",
+                            streamTimeout=15,
+                            streamRatio=ratio,
+                            snapshot=snap_display,
+                            snapshotTimeout=5,
+                            snapshotSslValidation=True,
+                        ),
+                        extras={
+                            "streamRatio": ratio.value if hasattr(ratio, "value") else aspect_ratio_str,
+                            "go2rtcStream": stream,
+                        },
+                    )
+                )
+            return configs
         except Exception as exc:
-            self._logger.warning("Falling back to dict webcam config: %s", exc)
-            return [
-                {
-                    "name": "octocam",
-                    "displayName": display_name,
-                    "flipH": False,
-                    "flipV": False,
-                    "rotate90": False,
-                    "snapshotDisplay": snapshot_display,
-                    "canSnapshot": True,
-                }
-            ]
+            self._logger.warning("Falling back to dict webcam configs: %s", exc)
+            dict_configs = []
+            for stream in streams_to_register:
+                is_primary = (stream == active_stream)
+                cam_name = "octocam" if is_primary else f"octocam_{stream}"
+                display = (
+                    base_display_name
+                    if len(streams_to_register) == 1
+                    else f"{base_display_name} ({stream})"
+                )
+                snap_display = (
+                    custom_snapshot_url
+                    if (custom_snapshot_url and is_primary)
+                    else resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+                )
+                dict_configs.append(
+                    {
+                        "name": cam_name,
+                        "displayName": display,
+                        "flipH": False,
+                        "flipV": False,
+                        "rotate90": False,
+                        "snapshotDisplay": snap_display,
+                        "canSnapshot": True,
+                        "go2rtcStream": stream,
+                    }
+                )
+            return dict_configs
 
     def take_webcam_snapshot(self, provided_webcam: Any) -> Iterable[bytes]:
         config = self._build_engine_config(include_turn=False)
-        jpeg_bytes = self._webrtc_engine.capture_snapshot(config)
+        cam_name = (
+            getattr(provided_webcam, "name", "")
+            if not isinstance(provided_webcam, dict)
+            else str(provided_webcam.get("name", ""))
+        )
+        stream_override = None
+        if cam_name.startswith("octocam_"):
+            stream_override = cam_name[len("octocam_") :]
+        jpeg_bytes = self._webrtc_engine.capture_snapshot(
+            config, stream_override=stream_override
+        )
         return [jpeg_bytes]
 
     # ~~ SimpleApiPlugin mixin ~~
@@ -249,9 +291,10 @@ class OctocamPlugin(
     def get_api_commands(self) -> Dict[str, List[str]]:
         return {
             "get_ice_servers": [],
+            "get_available_streams": [],
             "offer": ["sdp", "type"],
             "test_cloudflare": [],
-            "check_vaapi": [],
+            "test_go2rtc": [],
         }
 
     def on_api_command(self, command: str, data: Dict[str, Any]) -> Any:
@@ -266,9 +309,25 @@ class OctocamPlugin(
                 }
             )
 
+        if command == "get_available_streams":
+            go2rtc_url = (
+                data.get("go2rtc_url")
+                or self._settings.get(["go2rtc_url"])
+                or "http://127.0.0.1:1984"
+            )
+            streams = self._webrtc_engine.get_available_streams(go2rtc_url)
+            selected = str(self._settings.get(["go2rtc_stream"]) or "octocam")
+            return self._json_response(
+                {
+                    "streams": streams,
+                    "selected": selected,
+                }
+            )
+
         if command == "offer":
             sdp = data.get("sdp", "")
             sdp_type = data.get("type", "offer")
+            stream_override = data.get("stream")
             if not sdp:
                 return self._json_response(
                     {"error": "Missing 'sdp' in WebRTC offer payload."},
@@ -280,6 +339,7 @@ class OctocamPlugin(
                     sdp=sdp,
                     sdp_type=sdp_type,
                     config=config,
+                    stream_override=stream_override,
                 )
                 return self._json_response(answer)
             except Exception as exc:
@@ -327,14 +387,40 @@ class OctocamPlugin(
                     status=400,
                 )
 
-        if command == "check_vaapi":
-            vaapi_device = (
-                data.get("vaapi_device")
-                or self._settings.get(["vaapi_device"])
-                or "/dev/dri/renderD128"
+        if command == "test_go2rtc":
+            go2rtc_url = (
+                data.get("go2rtc_url")
+                or self._settings.get(["go2rtc_url"])
+                or "http://127.0.0.1:1984"
+            ).strip().rstrip("/")
+            stream_name = (
+                data.get("go2rtc_stream")
+                or self._settings.get(["go2rtc_stream"])
+                or "octocam"
+            ).strip()
+
+            available_streams = self._webrtc_engine.get_available_streams(go2rtc_url)
+            stream_found = stream_name in available_streams
+            if stream_found:
+                msg = f"Connected to go2rtc! Stream '{stream_name}' is available."
+            elif available_streams:
+                msg = (
+                    f"Connected to go2rtc, but stream '{stream_name}' was not found. "
+                    f"Available streams: {', '.join(available_streams)}"
+                )
+            else:
+                msg = (
+                    f"Connected to go2rtc at {go2rtc_url}, but no streams are currently configured."
+                )
+
+            return self._json_response(
+                {
+                    "ok": bool(available_streams),
+                    "stream_found": stream_found,
+                    "message": msg,
+                    "streams": available_streams,
+                }
             )
-            status = probe_vaapi_support(vaapi_device=vaapi_device)
-            return self._json_response(status)
 
         return self._json_response(
             {"error": f"Unknown API command: {command}"}, status=400
@@ -365,16 +451,8 @@ class OctocamPlugin(
     def _build_engine_config(self, include_turn: bool = True) -> EngineConfig:
         ice_servers = self._resolve_ice_servers() if include_turn else []
         return EngineConfig(
-            backend_mode=self._settings.get(["backend_mode"]) or "aiortc",
-            stream_source=self._settings.get(["stream_source"]) or "/dev/video0",
-            input_format=self._settings.get(["input_format"]) or "auto",
-            resolution=self._settings.get(["resolution"]) or "1280x720",
-            framerate=int(self._settings.get_int(["framerate"]) or 30),
-            bitrate=self._settings.get(["bitrate"]) or "2500k",
-            hwaccel_mode=self._settings.get(["hwaccel_mode"]) or "vaapi",
-            vaapi_device=self._settings.get(["vaapi_device"])
-            or "/dev/dri/renderD128",
-            whep_url=self._settings.get(["whep_url"]) or "",
+            go2rtc_url=self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984",
+            go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocam",
             snapshot_url=self._settings.get(["snapshot_url"]) or "",
             flip_h=bool(self._settings.get_boolean(["flip_h"])),
             flip_v=bool(self._settings.get_boolean(["flip_v"])),

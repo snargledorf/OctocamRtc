@@ -6,8 +6,8 @@ plugin_package = "octoprint_octocam"
 plugin_name = "OctoPrint-Octocam"
 plugin_version = "0.1.0"
 plugin_description = (
-    "Low-latency WebRTC webcam streaming for OctoPrint with configurable STUN/TURN "
-    "(Cloudflare TURN), Linux VAAPI hardware acceleration, and WHEP support."
+    "Low-latency WebRTC webcam streaming for OctoPrint powered by go2rtc, "
+    "with dynamic Cloudflare Calls TURN credentials and multi-stream selection."
 )
 plugin_author = "Ryan"
 plugin_url = "https://github.com/Ryan/Octocam"
@@ -15,8 +15,6 @@ plugin_license = "AGPLv3"
 
 plugin_requires = [
     "requests>=2.28.0,<3.0.0",
-    "aiortc>=1.6.0",
-    "av>=11.0.0",
     "Pillow>=9.0.0",
 ]
 
