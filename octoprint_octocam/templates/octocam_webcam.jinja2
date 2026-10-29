@@ -1,0 +1,31 @@
+<div id="octocam_webcam_container" class="octocam-player-wrapper">
+    <div class="octocam-video-viewport" data-bind="css: viewportCss()">
+        <div class="octocam-rotation-container" data-bind="css: { 'rotate90': rotate90() }">
+            <video id="octocam_webrtc_video"
+                   class="octocam-video-element"
+                   autoplay
+                   playsinline
+                   muted
+                   data-bind="css: { 'flipH': flipH(), 'flipV': flipV() }"></video>
+        </div>
+
+        <div class="octocam-overlay-bar">
+            <span class="octocam-badge" data-bind="css: statusBadgeClass(), text: connectionBadgeText()">
+                Connecting...
+            </span>
+
+            <div class="octocam-controls">
+                <button class="btn btn-mini btn-inverse" type="button"
+                        data-bind="click: reconnectStream"
+                        title="{{ _('Reconnect WebRTC Stream') }}">
+                    <i class="fa fa-refresh"></i>
+                </button>
+                <button class="btn btn-mini btn-inverse" type="button"
+                        data-bind="click: toggleFullscreen"
+                        title="{{ _('Fullscreen') }}">
+                    <i class="fa fa-arrows-alt"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,99 @@
+.octocam-player-wrapper {
+    width: 100%;
+    margin: 0 auto;
+}
+
+.octocam-video-viewport {
+    position: relative;
+    width: 100%;
+    background-color: #111111;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.octocam-video-viewport.ratio-16-9 {
+    aspect-ratio: 16 / 9;
+}
+
+.octocam-video-viewport.ratio-4-3 {
+    aspect-ratio: 4 / 3;
+}
+
+.octocam-rotation-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.octocam-rotation-container.rotate90 {
+    transform: rotate(-90deg);
+}
+
+.octocam-video-element {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.octocam-video-element.flipH {
+    transform: scaleX(-1);
+}
+
+.octocam-video-element.flipV {
+    transform: scaleY(-1);
+}
+
+.octocam-video-element.flipH.flipV {
+    transform: scale(-1, -1);
+}
+
+.octocam-overlay-bar {
+    position: absolute;
+    bottom: 8px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.octocam-badge {
+    pointer-events: auto;
+    padding: 3px 9px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ffffff;
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
+}
+
+.octocam-badge.badge-connected {
+    background-color: rgba(25, 135, 84, 0.85);
+}
+
+.octocam-badge.badge-connecting {
+    background-color: rgba(217, 130, 43, 0.85);
+}
+
+.octocam-badge.badge-error {
+    background-color: rgba(200, 45, 45, 0.85);
+}
+
+.octocam-controls {
+    pointer-events: auto;
+    display: flex;
+    gap: 6px;
+}
+
+.octocam-status-banner {
+    margin-top: 6px;
+}
+
+.octocam-ice-table input {
+    margin-bottom: 0;
+}

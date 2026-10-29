@@ -1,0 +1,258 @@
+<form class="form-horizontal" onsubmit="return false;">
+    <h3>{{ _('OctoCam — WebRTC & STUN/TURN Configuration') }}</h3>
+
+    <!-- Section 1: Stream Backend & Linux Hardware Acceleration -->
+    <fieldset>
+        <legend>{{ _('Video Source & Hardware Acceleration') }}</legend>
+
+        <div class="control-group">
+            <label class="control-label" for="octocam_webcam_name">{{ _('Webcam Display Name') }}</label>
+            <div class="controls">
+                <input id="octocam_webcam_name" type="text" class="input-xlarge"
+                       data-bind="value: settingsViewModel.settings.plugins.octocam.webcam_name">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label" for="octocam_backend_mode">{{ _('WebRTC Backend Mode') }}</label>
+            <div class="controls">
+                <select id="octocam_backend_mode" class="input-xlarge"
+                        data-bind="value: settingsViewModel.settings.plugins.octocam.backend_mode">
+                    <option value="aiortc">{{ _('Built-in (aiortc + FFmpeg/VAAPI)') }}</option>
+                    <option value="whep">{{ _('External WHEP Server (go2rtc / MediaMTX)') }}</option>
+                </select>
+                <span class="help-block">
+                    {{ _('Built-in mode handles camera ingest, VAAPI hardware acceleration, and server-side TURN natively. WHEP mode proxies SDP offers to an external WHEP server.') }}
+                </span>
+            </div>
+        </div>
+
+        <!-- Built-in (aiortc + VAAPI) Specific Settings -->
+        <div data-bind="visible: settingsViewModel.settings.plugins.octocam.backend_mode() === 'aiortc'">
+            <div class="control-group">
+                <label class="control-label" for="octocam_stream_source">{{ _('Camera Source / Device') }}</label>
+                <div class="controls">
+                    <input id="octocam_stream_source" type="text" class="input-xlarge"
+                           placeholder="/dev/video0 or http://127.0.0.1:8080/?action=stream"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.stream_source">
+                    <span class="help-block">
+                        {{ _('V4L2 device path (e.g. /dev/video0), local MJPEG stream URL, or RTSP URL.') }}
+                    </span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label" for="octocam_input_format">{{ _('Input Format') }}</label>
+                <div class="controls">
+                    <select id="octocam_input_format" class="input-medium"
+                            data-bind="value: settingsViewModel.settings.plugins.octocam.input_format">
+                        <option value="auto">{{ _('Auto-detect') }}</option>
+                        <option value="v4l2">V4L2 (/dev/videoX)</option>
+                        <option value="mjpeg">MJPEG</option>
+                        <option value="rtsp">RTSP</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label" for="octocam_resolution">{{ _('Resolution & Framerate') }}</label>
+                <div class="controls form-inline">
+                    <input id="octocam_resolution" type="text" class="input-small" placeholder="1280x720"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.resolution">
+                    <span>@</span>
+                    <div class="input-append">
+                        <input id="octocam_framerate" type="number" min="1" max="120" class="input-mini"
+                               data-bind="value: settingsViewModel.settings.plugins.octocam.framerate">
+                        <span class="add-on">fps</span>
+                    </div>
+                    <span>&nbsp;{{ _('Bitrate:') }}</span>
+                    <input id="octocam_bitrate" type="text" class="input-mini" placeholder="2500k"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.bitrate">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label" for="octocam_hwaccel_mode">{{ _('Hardware Acceleration') }}</label>
+                <div class="controls">
+                    <select id="octocam_hwaccel_mode" class="input-xlarge"
+                            data-bind="value: settingsViewModel.settings.plugins.octocam.hwaccel_mode">
+                        <option value="vaapi">{{ _('Linux VAAPI (Intel / AMD GPU — h264_vaapi)') }}</option>
+                        <option value="v4l2m2m">{{ _('V4L2 M2M (Raspberry Pi / ARM — h264_v4l2m2m)') }}</option>
+                        <option value="none">{{ _('Software Only (CPU — libx264 ultrafast)') }}</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group" data-bind="visible: settingsViewModel.settings.plugins.octocam.hwaccel_mode() === 'vaapi'">
+                <label class="control-label" for="octocam_vaapi_device">{{ _('VAAPI Render Device') }}</label>
+                <div class="controls">
+                    <div class="input-append">
+                        <input id="octocam_vaapi_device" type="text" class="input-large"
+                               placeholder="/dev/dri/renderD128"
+                               data-bind="value: settingsViewModel.settings.plugins.octocam.vaapi_device">
+                        <button class="btn" type="button" data-bind="click: checkVaapiStatus, disable: isCheckingVaapi()">
+                            <i class="fa fa-microchip"></i> {{ _('Check VAAPI Status') }}
+                        </button>
+                    </div>
+                    <div class="octocam-status-banner" data-bind="visible: vaapiStatusMessage(), css: { 'text-success': vaapiStatusOk(), 'text-error': !vaapiStatusOk() }">
+                        <small data-bind="text: vaapiStatusMessage"></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- External WHEP Specific Settings -->
+        <div data-bind="visible: settingsViewModel.settings.plugins.octocam.backend_mode() === 'whep'">
+            <div class="control-group">
+                <label class="control-label" for="octocam_whep_url">{{ _('WHEP Endpoint URL') }}</label>
+                <div class="controls">
+                    <input id="octocam_whep_url" type="text" class="input-xxlarge"
+                           placeholder="http://127.0.0.1:8889/octocam/whep"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.whep_url">
+                    <span class="help-block">
+                        {{ _('Local WHEP endpoint URL exposed by MediaMTX (e.g. http://127.0.0.1:8889/cam/whep) or go2rtc (e.g. http://127.0.0.1:1984/api/webrtc?src=cam).') }}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label" for="octocam_snapshot_url">{{ _('Optional Snapshot URL') }}</label>
+            <div class="controls">
+                <input id="octocam_snapshot_url" type="text" class="input-xlarge"
+                       placeholder="Leave blank to capture from stream source"
+                       data-bind="value: settingsViewModel.settings.plugins.octocam.snapshot_url">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label">{{ _('Orientation & Aspect Ratio') }}</label>
+            <div class="controls">
+                <label class="checkbox inline">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.flip_h"> {{ _('Flip Horizontally') }}
+                </label>
+                <label class="checkbox inline">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.flip_v"> {{ _('Flip Vertically') }}
+                </label>
+                <label class="checkbox inline">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.rotate90"> {{ _('Rotate 90° CCW') }}
+                </label>
+                <select class="input-small" style="margin-left: 12px;"
+                        data-bind="value: settingsViewModel.settings.plugins.octocam.aspect_ratio">
+                    <option value="16:9">16:9</option>
+                    <option value="4:3">4:3</option>
+                </select>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- Section 2: Cloudflare Calls TURN Server -->
+    <fieldset>
+        <legend>{{ _('Cloudflare Calls TURN Integration') }}</legend>
+
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.cloudflare_enabled">
+                    <strong>{{ _('Enable Dynamic Cloudflare TURN Credentials') }}</strong>
+                </label>
+                <span class="help-block">
+                    {{ _('Automatically generates short-lived TURN credentials via the Cloudflare Calls TURN API for both the OctoPrint host and remote browser viewers.') }}
+                </span>
+            </div>
+        </div>
+
+        <div data-bind="visible: settingsViewModel.settings.plugins.octocam.cloudflare_enabled()">
+            <div class="control-group">
+                <label class="control-label" for="octocam_cf_key_id">{{ _('Cloudflare TURN Key ID') }}</label>
+                <div class="controls">
+                    <input id="octocam_cf_key_id" type="text" class="input-xlarge"
+                           placeholder="e.g. 8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_turn_key_id">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label" for="octocam_cf_token">{{ _('Cloudflare TURN API Token') }}</label>
+                <div class="controls">
+                    <input id="octocam_cf_token" type="password" class="input-xlarge"
+                           placeholder="Bearer token for TURN key"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_api_token">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label" for="octocam_cf_ttl">{{ _('Credential TTL (seconds)') }}</label>
+                <div class="controls">
+                    <div class="input-append">
+                        <input id="octocam_cf_ttl" type="number" min="60" max="172800" class="input-small"
+                               data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_ttl">
+                        <button class="btn" type="button" data-bind="click: testCloudflareTurn, disable: isTestingCloudflare()">
+                            <i class="fa fa-cloud"></i> {{ _('Test Cloudflare TURN') }}
+                        </button>
+                    </div>
+                    <div class="octocam-status-banner" data-bind="visible: cloudflareTestMessage(), css: { 'text-success': cloudflareTestOk(), 'text-error': !cloudflareTestOk() }">
+                        <small data-bind="text: cloudflareTestMessage"></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- Section 3: Custom Static STUN / TURN Servers -->
+    <fieldset>
+        <legend>{{ _('Additional Static STUN / TURN Servers') }}</legend>
+
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.force_turn_relay">
+                    {{ _('Force TURN Relay Transport (iceTransportPolicy = "relay")') }}
+                </label>
+                <span class="help-block">
+                    {{ _('When enabled, forces all media traffic through TURN relay candidates (useful for strict firewalls or testing TURN connectivity).') }}
+                </span>
+            </div>
+        </div>
+
+        <table class="table table-striped table-condensed octocam-ice-table">
+            <thead>
+                <tr>
+                    <th style="width: 45%;">{{ _('STUN/TURN URL(s) (comma-separated)') }}</th>
+                    <th style="width: 22%;">{{ _('Username (optional)') }}</th>
+                    <th style="width: 23%;">{{ _('Credential (optional)') }}</th>
+                    <th style="width: 10%;"></th>
+                </tr>
+            </thead>
+            <tbody data-bind="foreach: iceServersList">
+                <tr>
+                    <td>
+                        <input type="text" class="input-block-level"
+                               placeholder="stun:stun.cloudflare.com:3478 or turn:turn.example.com:3478"
+                               data-bind="value: urls">
+                    </td>
+                    <td>
+                        <input type="text" class="input-block-level"
+                               placeholder="Username"
+                               data-bind="value: username">
+                    </td>
+                    <td>
+                        <input type="password" class="input-block-level"
+                               placeholder="Password / Credential"
+                               data-bind="value: credential">
+                    </td>
+                    <td style="text-align: right;">
+                        <button class="btn btn-mini btn-danger" type="button"
+                                data-bind="click: $parent.removeIceServer"
+                                title="{{ _('Remove Server') }}">
+                            <i class="fa fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <button class="btn btn-small" type="button" data-bind="click: addIceServer">
+            <i class="fa fa-plus"></i> {{ _('Add STUN/TURN Server') }}
+        </button>
+    </fieldset>
+</form>

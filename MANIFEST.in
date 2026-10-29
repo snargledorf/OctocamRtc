@@ -1,0 +1,4 @@
+include README.md
+include pyproject.toml
+recursive-include octoprint_octocam/templates *
+recursive-include octoprint_octocam/static *
