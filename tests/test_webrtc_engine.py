@@ -8,12 +8,14 @@ from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     FFmpegFrameFilter,
     WebRTCEngine,
+    _extract_sdp_video_codecs,
     _silence_pyav_swscaler_warnings,
     apply_pil_transforms,
     build_ffmpeg_vf_filter,
     build_media_player_kwargs,
     configure_v4l2_camera_transforms,
     create_transformed_video_track,
+    create_vaapi_hwdecode_track,
     install_hardware_h264_encoder,
     parse_bitrate_bps,
     probe_vaapi_support,
@@ -242,6 +244,46 @@ class TestWebRTCEngine(unittest.TestCase):
             self.assertEqual(mock_reformatter_instance.reformat.call_count, 2)
             frame1.reformat.assert_not_called()
             frame2.reformat.assert_not_called()
+
+    def test_extract_sdp_video_codecs_and_prefer_h264(self) -> None:
+        sample_sdp = (
+            "v=0\r\n"
+            "m=video 9 UDP/TLS/RTP/SAVPF 96 98\r\n"
+            "a=rtpmap:96 VP8/90000\r\n"
+            "a=rtpmap:98 H264/90000\r\n"
+        )
+        self.assertEqual(
+            _extract_sdp_video_codecs(sample_sdp),
+            ["VP8/90000", "H264/90000"],
+        )
+
+        vp8_codec = MagicMock(mimeType="video/VP8")
+        h264_codec = MagicMock(mimeType="video/H264")
+        fake_codecs_mod = MagicMock(CODECS={"video": [vp8_codec, h264_codec]})
+        fake_transceiver = MagicMock(kind="video")
+        fake_pc = MagicMock()
+        fake_pc.getTransceivers.return_value = [fake_transceiver]
+
+        engine = WebRTCEngine()
+        with patch.dict(
+            "sys.modules",
+            {"aiortc": MagicMock(codecs=fake_codecs_mod), "aiortc.codecs": fake_codecs_mod},
+        ):
+            engine._prefer_h264_on_pc(fake_pc)
+
+        fake_transceiver.setCodecPreferences.assert_called_once_with(
+            [h264_codec, vp8_codec]
+        )
+
+    def test_create_vaapi_hwdecode_track_returns_none_when_device_missing(self) -> None:
+        config = EngineConfig(
+            hwaccel_mode="vaapi",
+            vaapi_device="/dev/dri/renderD128",
+        )
+        with patch("octoprint_octocam.webrtc_engine.os.path.exists", return_value=False):
+            track, gpu_transpose = create_vaapi_hwdecode_track(config)
+        self.assertIsNone(track)
+        self.assertFalse(gpu_transpose)
 
 
 if __name__ == "__main__":

@@ -272,7 +272,34 @@ $(function () {
             var pc = new RTCPeerConnection(rtcConfig);
             self._pc = pc;
 
-            pc.addTransceiver("video", { direction: "recvonly" });
+            var transceiver = pc.addTransceiver("video", { direction: "recvonly" });
+            if (
+                transceiver &&
+                typeof transceiver.setCodecPreferences === "function" &&
+                typeof RTCRtpReceiver !== "undefined" &&
+                typeof RTCRtpReceiver.getCapabilities === "function"
+            ) {
+                try {
+                    var caps = RTCRtpReceiver.getCapabilities("video");
+                    if (caps && Array.isArray(caps.codecs)) {
+                        var h264Codecs = [];
+                        var otherCodecs = [];
+                        caps.codecs.forEach(function (c) {
+                            var mime = (c.mimeType || "").toLowerCase();
+                            if (mime === "video/h264") {
+                                h264Codecs.push(c);
+                            } else {
+                                otherCodecs.push(c);
+                            }
+                        });
+                        if (h264Codecs.length > 0) {
+                            transceiver.setCodecPreferences(h264Codecs.concat(otherCodecs));
+                        }
+                    }
+                } catch (e) {
+                    // Ignore if browser rejects codec preference ordering
+                }
+            }
 
             pc.ontrack = function (event) {
                 if (event.track.kind === "video" && event.streams && event.streams[0]) {

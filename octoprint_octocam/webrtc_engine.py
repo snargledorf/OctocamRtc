@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import requests
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("octoprint.plugins.octocam")
 
 
 def _silence_pyav_swscaler_warnings() -> None:
@@ -131,8 +131,20 @@ def probe_vaapi_support(vaapi_device: str = "/dev/dri/renderD128") -> Dict[str, 
                 "'h264_vaapi' was detected."
             )
 
+    available = bool(device_accessible and (ffmpeg_vaapi_works or pyav_h264_vaapi))
+    logger.info(
+        "[OctoCam HW] VAAPI probe result for '%s': available=%s, exists=%s, r/w=%s, ffmpeg=%s, ffmpeg_vaapi_works=%s, pyav_h264_vaapi=%s, message='%s'",
+        device,
+        available,
+        device_exists,
+        device_accessible,
+        ffmpeg_path,
+        ffmpeg_vaapi_works,
+        pyav_h264_vaapi,
+        diagnostic_message,
+    )
     return {
-        "available": bool(device_accessible and (ffmpeg_vaapi_works or pyav_h264_vaapi)),
+        "available": available,
         "device": device,
         "device_exists": device_exists,
         "device_accessible": device_accessible,
@@ -232,11 +244,24 @@ def _set_v4l2_control(
         try:
             ctrl_buf = struct.pack("<Ii", cid, int(value))
             fcntl.ioctl(fd, VIDIOC_S_CTRL, ctrl_buf)
+            logger.info(
+                "[OctoCam HW] V4L2 ioctl VIDIOC_S_CTRL succeeded on %s: %s (0x%08x) = %d",
+                device_path,
+                ctrl_name,
+                cid,
+                int(value),
+            )
             return True
         finally:
             os.close(fd)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "[OctoCam HW] V4L2 ioctl VIDIOC_S_CTRL not supported/failed on %s for %s=%d: %s",
+            device_path,
+            ctrl_name,
+            int(value),
+            exc,
+        )
 
     v4l2_ctl = shutil.which("v4l2-ctl")
     if v4l2_ctl:
@@ -254,9 +279,28 @@ def _set_v4l2_control(
                 check=False,
             )
             if proc.returncode == 0:
+                logger.info(
+                    "[OctoCam HW] v4l2-ctl succeeded on %s: %s = %d",
+                    device_path,
+                    ctrl_name,
+                    int(value),
+                )
                 return True
-        except Exception:
-            pass
+            logger.debug(
+                "[OctoCam HW] v4l2-ctl failed on %s for %s=%d: %s",
+                device_path,
+                ctrl_name,
+                int(value),
+                (proc.stderr or proc.stdout or "").strip(),
+            )
+        except Exception as exc:
+            logger.debug(
+                "[OctoCam HW] v4l2-ctl exception on %s for %s=%d: %s",
+                device_path,
+                ctrl_name,
+                int(value),
+                exc,
+            )
 
     return False
 
@@ -276,6 +320,10 @@ def configure_v4l2_camera_transforms(
     """
     source = (stream_source or "").strip()
     if not source.startswith("/dev/video") or not os.path.exists(source):
+        logger.info(
+            "[OctoCam HW] Stream source '%s' is not a local /dev/video* device; skipping V4L2 in-camera hardware transform controls.",
+            source,
+        )
         return {
             "flip_h_applied": False,
             "flip_v_applied": False,
@@ -293,11 +341,23 @@ def configure_v4l2_camera_transforms(
         source, "rotate", V4L2_CID_ROTATE, 270 if rotate90 else 0
     )
 
-    return {
+    result = {
         "flip_h_applied": bool(flip_h and hflip_supported),
         "flip_v_applied": bool(flip_v and vflip_supported),
         "rotate90_applied": bool(rotate90 and rotate_supported),
     }
+    logger.info(
+        "[OctoCam HW] V4L2 camera hardware transform check on '%s': requested=(flip_h=%s, flip_v=%s, rotate90=%s), supported=(hflip=%s, vflip=%s, rotate=%s), applied_in_camera=%s",
+        source,
+        flip_h,
+        flip_v,
+        rotate90,
+        hflip_supported,
+        vflip_supported,
+        rotate_supported,
+        result,
+    )
+    return result
 
 
 def build_ffmpeg_vf_filter(
@@ -488,6 +548,355 @@ def build_rtc_ice_servers(ice_servers: List[Dict[str, Any]]) -> List[Any]:
     return rtc_servers
 
 
+def _extract_sdp_video_codecs(sdp: str) -> List[str]:
+    """Extracts the list of `a=rtpmap:...` codec strings inside the `m=video` section of an SDP."""
+    codecs: List[str] = []
+    in_video = False
+    for raw_line in (sdp or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("m="):
+            in_video = line.startswith("m=video")
+        elif in_video and line.startswith("a=rtpmap:"):
+            parts = line.split(" ", 1)
+            if len(parts) == 2:
+                codecs.append(parts[1].strip())
+    return codecs
+
+
+def create_vaapi_hwdecode_track(
+    config: EngineConfig,
+    flip_h: bool = False,
+    flip_v: bool = False,
+    rotate90: bool = False,
+    log: Optional[logging.Logger] = None,
+) -> tuple[Optional[Any], bool]:
+    """
+    Attempts to open `config.stream_source` using the `ffmpeg` CLI with VAAPI hardware
+    decoding (`-hwaccel vaapi -hwaccel_device <dev> -hwaccel_output_format vaapi`) and GPU
+    `scale_vaapi=format=nv12` (+ optional `transpose_vaapi`), outputting raw `nv12` frames
+    wrapped as `av.VideoFrame` objects.
+
+    Returns `(track, transforms_applied_on_gpu)`. If VAAPI hardware decoding is unavailable
+    or fails to produce a frame, logs the diagnostic reason and returns `(None, False)` so
+    the caller can fall back to `MediaPlayer`.
+    """
+    active_log = log or logger
+    hw_mode = (config.hwaccel_mode or "none").strip().lower()
+    device = (config.vaapi_device or "/dev/dri/renderD128").strip()
+    if hw_mode != "vaapi":
+        return None, False
+
+    if not (os.path.exists(device) and os.access(device, os.R_OK | os.W_OK)):
+        active_log.warning(
+            "[OctoCam HW] Cannot use VAAPI hardware decoding: device '%s' is missing or not readable/writable.",
+            device,
+        )
+        return None, False
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        active_log.warning(
+            "[OctoCam HW] Cannot use VAAPI hardware decoding: 'ffmpeg' binary not found in PATH."
+        )
+        return None, False
+
+    try:
+        import fractions
+        import queue as queue_mod
+        import time
+
+        import av
+        import numpy as np
+        from aiortc import MediaStreamTrack
+    except Exception as exc:
+        active_log.warning(
+            "[OctoCam HW] Cannot initialize VAAPI hardware decode track (missing dependency: %s).",
+            exc,
+        )
+        return None, False
+
+    res_str = (config.resolution or "1280x720").strip().lower()
+    try:
+        in_w_str, in_h_str = res_str.split("x", 1)
+        in_w = max(16, int(in_w_str))
+        in_h = max(16, int(in_h_str))
+    except Exception:
+        in_w, in_h = 1280, 720
+
+    fps = max(1, int(config.framerate or 30))
+    source = (config.stream_source or "/dev/video0").strip()
+    input_fmt = (config.input_format or "auto").strip().lower()
+    needs_transform = bool(flip_h or flip_v or rotate90)
+
+    # Try with GPU transpose_vaapi first if transforms are requested; if the driver lacks
+    # VAAPI VPP mirror/rotation support, retry VAAPI hardware decode with scale_vaapi only.
+    transpose_attempts = [True, False] if needs_transform else [False]
+
+    for use_gpu_transpose in transpose_attempts:
+        out_w = in_h if (use_gpu_transpose and rotate90) else in_w
+        out_h = in_w if (use_gpu_transpose and rotate90) else in_h
+        frame_byte_size = (out_w * out_h * 3) // 2
+
+        vf_parts = [f"scale_vaapi=w={in_w}:h={in_h}:format=nv12"]
+        if use_gpu_transpose:
+            if flip_h:
+                vf_parts.append("transpose_vaapi=dir=hflip")
+            if flip_v:
+                vf_parts.append("transpose_vaapi=dir=vflip")
+            if rotate90:
+                vf_parts.append("transpose_vaapi=dir=cclock")
+        vf_parts.append("hwdownload")
+        vf_parts.append("format=nv12")
+        vf_chain = ",".join(vf_parts)
+
+        cmd: List[str] = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-hwaccel",
+            "vaapi",
+            "-hwaccel_device",
+            device,
+            "-hwaccel_output_format",
+            "vaapi",
+        ]
+
+        if source.startswith("/dev/video"):
+            cmd.extend(["-f", "v4l2"])
+            if input_fmt in ("auto", "mjpeg"):
+                cmd.extend(["-input_format", "mjpeg"])
+            elif input_fmt != "v4l2":
+                cmd.extend(["-input_format", input_fmt])
+            cmd.extend(
+                [
+                    "-video_size",
+                    f"{in_w}x{in_h}",
+                    "-framerate",
+                    str(fps),
+                ]
+            )
+        elif source.startswith("rtsp://"):
+            cmd.extend(["-rtsp_transport", "tcp"])
+
+        cmd.extend(
+            [
+                "-i",
+                source,
+                "-vf",
+                vf_chain,
+                "-an",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "nv12",
+                "pipe:1",
+            ]
+        )
+
+        active_log.info(
+            "[OctoCam HW] Starting FFmpeg VAAPI hardware decode subprocess (gpu_transpose=%s): %s",
+            use_gpu_transpose,
+            " ".join(cmd),
+        )
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except Exception as exc:
+            active_log.warning(
+                "[OctoCam HW] Failed to launch FFmpeg VAAPI decode subprocess: %s",
+                exc,
+            )
+            return None, False
+
+        frame_queue: queue_mod.Queue[bytes] = queue_mod.Queue(maxsize=2)
+        stderr_lines: List[str] = []
+
+        def _stderr_reader(p: subprocess.Popen[bytes], lines_out: List[str]) -> None:
+            stderr_pipe = p.stderr
+            if stderr_pipe is None:
+                return
+            try:
+                for raw_line in iter(stderr_pipe.readline, b""):
+                    text = raw_line.decode("utf-8", errors="replace").strip()
+                    if text:
+                        lines_out.append(text)
+                        if len(lines_out) > 25:
+                            lines_out.pop(0)
+                        active_log.info("[OctoCam HW] [ffmpeg vaapi-decode] %s", text)
+            except Exception:
+                pass
+
+        def _stdout_reader(
+            p: subprocess.Popen[bytes],
+            q: queue_mod.Queue[bytes],
+            expected_bytes: int,
+        ) -> None:
+            stdout_pipe = p.stdout
+            if stdout_pipe is None:
+                return
+            buf = bytearray()
+            fd = stdout_pipe.fileno()
+            try:
+                while p.poll() is None:
+                    chunk = os.read(fd, max(65536, expected_bytes - len(buf)))
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    while len(buf) >= expected_bytes:
+                        frame_bytes = bytes(buf[:expected_bytes])
+                        del buf[:expected_bytes]
+                        if q.full():
+                            try:
+                                q.get_nowait()
+                            except queue_mod.Empty:
+                                pass
+                        q.put_nowait(frame_bytes)
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_stderr_reader,
+            args=(proc, stderr_lines),
+            name="OctocamVAAPIDecodeStderr",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=_stdout_reader,
+            args=(proc, frame_queue, frame_byte_size),
+            name="OctocamVAAPIDecodeStdout",
+            daemon=True,
+        ).start()
+
+        # Wait up to 2.5s for the first hardware-decoded nv12 frame
+        first_frame_bytes: Optional[bytes] = None
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            try:
+                first_frame_bytes = frame_queue.get(timeout=0.05)
+                break
+            except queue_mod.Empty:
+                if proc.poll() is not None:
+                    break
+
+        if first_frame_bytes is None:
+            rc = proc.poll()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            stderr_summary = " | ".join(stderr_lines) or "no stderr output"
+            active_log.warning(
+                "[OctoCam HW] FFmpeg VAAPI hardware decode attempt (gpu_transpose=%s) did not produce frames (rc=%s, stderr='%s').",
+                use_gpu_transpose,
+                rc,
+                stderr_summary,
+            )
+            continue
+
+        # Put the first frame back so the consumer receives it immediately
+        frame_queue.put_nowait(first_frame_bytes)
+        active_log.info(
+            "[OctoCam HW] VAAPI hardware decode ACTIVE on '%s': received first GPU-decoded nv12 frame (%dx%d, %d bytes, gpu_transpose=%s).",
+            device,
+            out_w,
+            out_h,
+            len(first_frame_bytes),
+            use_gpu_transpose,
+        )
+
+        class FFmpegVAAPIVideoStreamTrack(MediaStreamTrack):
+            kind = "video"
+
+            def __init__(
+                self,
+                vaapi_proc: subprocess.Popen[bytes],
+                q: queue_mod.Queue[bytes],
+                width: int,
+                height: int,
+                framerate_val: int,
+            ) -> None:
+                super().__init__()
+                self._proc = vaapi_proc
+                self._queue = q
+                self._width = width
+                self._height = height
+                self._fps = framerate_val
+                self._pts = 0
+                self._time_base = fractions.Fraction(1, 90000)
+                self._pts_step = int(90000 // framerate_val)
+                self._last_frame: Optional[Any] = None
+                self._frames_delivered = 0
+
+            async def recv(self) -> Any:
+                loop = asyncio.get_running_loop()
+                raw: Optional[bytes] = None
+                try:
+                    raw = await loop.run_in_executor(
+                        None, lambda: self._queue.get(timeout=1.0)
+                    )
+                except Exception:
+                    if self._proc.poll() is not None:
+                        raise RuntimeError(
+                            f"FFmpeg VAAPI hardware decode process exited with code {self._proc.returncode}"
+                        )
+
+                if raw is not None:
+                    arr = np.frombuffer(raw, dtype=np.uint8).reshape(
+                        (self._height * 3 // 2, self._width)
+                    )
+                    video_frame = av.VideoFrame.from_ndarray(arr, format="nv12")
+                    self._last_frame = video_frame
+                    self._frames_delivered += 1
+                    if self._frames_delivered % 300 == 0:
+                        active_log.info(
+                            "[OctoCam HW] VAAPI hardware decode heartbeat: %d nv12 frames decoded (%dx%d).",
+                            self._frames_delivered,
+                            self._width,
+                            self._height,
+                        )
+                elif self._last_frame is not None:
+                    video_frame = self._last_frame
+                else:
+                    raise RuntimeError("No frame available from VAAPI hardware decode")
+
+                self._pts += self._pts_step
+                video_frame.pts = self._pts
+                video_frame.time_base = self._time_base
+                return video_frame
+
+            def stop(self) -> None:
+                super().stop()
+                if self._proc is not None:
+                    try:
+                        self._proc.kill()
+                    except Exception:
+                        pass
+
+        return (
+            FFmpegVAAPIVideoStreamTrack(
+                vaapi_proc=proc,
+                q=frame_queue,
+                width=out_w,
+                height=out_h,
+                framerate_val=fps,
+            ),
+            use_gpu_transpose,
+        )
+
+    return None, False
+
+
 def install_hardware_h264_encoder(
     aiortc_codecs_module: Any,
     aiortc_h264_module: Any,
@@ -498,6 +907,7 @@ def install_hardware_h264_encoder(
     vaapi_flip_h: bool = False,
     vaapi_flip_v: bool = False,
     vaapi_rotate90: bool = False,
+    logger_instance: Optional[logging.Logger] = None,
 ) -> None:
     """
     Hooks `aiortc.codecs.h264.H264Encoder` to support Linux hardware H.264 encoding
@@ -509,6 +919,7 @@ def install_hardware_h264_encoder(
     import av
 
     _silence_pyav_swscaler_warnings()
+    active_log = logger_instance or logger
 
     if not hasattr(aiortc_h264_module, "_OriginalH264Encoder"):
         aiortc_h264_module._OriginalH264Encoder = aiortc_h264_module.H264Encoder
@@ -518,6 +929,17 @@ def install_hardware_h264_encoder(
     device = (vaapi_device or "/dev/dri/renderD128").strip()
     fps = max(1, int(framerate or 30))
 
+    active_log.info(
+        "[OctoCam HW] Installing H264Encoder hook: mode='%s', vaapi_device='%s', target_bitrate=%d bps, fps=%d, encode_transforms=(flip_h=%s, flip_v=%s, rotate90=%s)",
+        mode,
+        device,
+        target_bitrate,
+        fps,
+        vaapi_flip_h,
+        vaapi_flip_v,
+        vaapi_rotate90,
+    )
+
     class HardwareH264Encoder(base_encoder_cls):  # type: ignore[misc, valid-type]
         def __init__(self) -> None:
             super().__init__()
@@ -526,10 +948,21 @@ def install_hardware_h264_encoder(
             self._vaapi_proc: Optional[subprocess.Popen[bytes]] = None
             self._hw_dims: Optional[tuple[int, int]] = None
             self._reformatter: Optional[Any] = None
+            self._use_vaapi_transpose = True
+            self._vaapi_stderr: List[str] = []
+            self._logged_first_frame_in = False
+            self._logged_first_hw_packet = False
+            self._hw_frames_encoded = 0
+            self._hw_bytes_encoded = 0
             self._fallback_filter = FFmpegFrameFilter(
                 flip_h=vaapi_flip_h,
                 flip_v=vaapi_flip_v,
                 rotate90=vaapi_rotate90,
+            )
+            active_log.info(
+                "[OctoCam HW] H264Encoder instance created by aiortc (configured_mode='%s', initial_hw_active=%s).",
+                mode,
+                not self._hw_failed,
             )
 
         def _reformat_frame(self, frame: Any, target_format: str) -> Any:
@@ -551,6 +984,18 @@ def install_hardware_h264_encoder(
             return frame.reformat(format=target_format)
 
         def _encode_frame(self, frame: Any, force_keyframe: bool):
+            if not self._logged_first_frame_in:
+                self._logged_first_frame_in = True
+                active_log.info(
+                    "[OctoCam HW] H264Encoder._encode_frame received first frame: %dx%d, pix_fmt='%s', mode='%s', hw_failed=%s, force_keyframe=%s",
+                    getattr(frame, "width", -1),
+                    getattr(frame, "height", -1),
+                    getattr(getattr(frame, "format", None), "name", "unknown"),
+                    mode,
+                    self._hw_failed,
+                    force_keyframe,
+                )
+
             if self._hw_failed:
                 if mode == "vaapi" and self._fallback_filter.active:
                     frame = self._fallback_filter.transform(frame)
@@ -566,8 +1011,8 @@ def install_hardware_h264_encoder(
                     yield from self._encode_vaapi(frame, force_keyframe)
                     return
             except Exception as exc:
-                logger.warning(
-                    "Hardware H.264 encoder (%s) failed (%s); falling back to libx264 software encoding.",
+                active_log.warning(
+                    "[OctoCam HW] Hardware H.264 encoder (%s) FAILED (%s); falling back to CPU libx264 software encoding.",
                     mode,
                     exc,
                 )
@@ -582,6 +1027,12 @@ def install_hardware_h264_encoder(
         def _encode_v4l2m2m(self, frame: Any, force_keyframe: bool):
             dims = (frame.width, frame.height)
             if self._hw_codec is None or self._hw_dims != dims:
+                active_log.info(
+                    "[OctoCam HW] Initializing V4L2 M2M H.264 hardware encoder ('h264_v4l2m2m') for %dx%d @ %d fps.",
+                    frame.width,
+                    frame.height,
+                    fps,
+                )
                 codec = av.CodecContext.create("h264_v4l2m2m", "w")
                 codec.width = frame.width
                 codec.height = frame.height
@@ -600,89 +1051,191 @@ def install_hardware_h264_encoder(
                 frame.pict_type = av.video.frame.PictureType.NONE
 
             for packet in self._hw_codec.encode(frame):
-                yield from self._split_bitstream(bytes(packet))
+                raw_pkt = bytes(packet)
+                if not self._logged_first_hw_packet:
+                    self._logged_first_hw_packet = True
+                    active_log.info(
+                        "[OctoCam HW] V4L2 M2M H.264 hardware encoder ACTIVE: first packet produced (%d bytes).",
+                        len(raw_pkt),
+                    )
+                yield from self._split_bitstream(raw_pkt)
+
+        def _launch_vaapi_ffmpeg(self, width: int, height: int) -> None:
+            self._cleanup_hw()
+            self._vaapi_stderr = []
+            ffmpeg_bin = shutil.which("ffmpeg")
+            if not ffmpeg_bin:
+                raise RuntimeError("ffmpeg binary is required for VAAPI hardware encoding")
+
+            bitrate_val = int(self.target_bitrate or target_bitrate)
+            vf_chain = build_ffmpeg_vf_filter(
+                flip_h=vaapi_flip_h,
+                flip_v=vaapi_flip_v,
+                rotate90=vaapi_rotate90,
+                include_vaapi_hwupload=True,
+                use_vaapi_transpose=self._use_vaapi_transpose,
+            )
+            cmd = [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-fflags",
+                "nobuffer",
+                "-flags",
+                "low_delay",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "nv12",
+                "-s",
+                f"{width}x{height}",
+                "-r",
+                str(fps),
+                "-i",
+                "pipe:0",
+                "-vaapi_device",
+                device,
+                "-vf",
+                vf_chain,
+                "-c:v",
+                "h264_vaapi",
+                "-profile:v",
+                "578",  # Constrained Baseline
+                "-bf",
+                "0",
+                "-g",
+                str(fps),
+                "-b:v",
+                str(bitrate_val),
+                "-f",
+                "h264",
+                "pipe:1",
+            ]
+            active_log.info(
+                "[OctoCam HW] Launching FFmpeg VAAPI H.264 hardware encoder (use_vaapi_transpose=%s): %s",
+                self._use_vaapi_transpose,
+                " ".join(cmd),
+            )
+            self._vaapi_proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+            self._hw_dims = (width, height)
+            self._start_vaapi_reader(self._vaapi_proc)
 
         def _encode_vaapi(self, frame: Any, force_keyframe: bool):
             if not (os.path.exists(device) and os.access(device, os.R_OK | os.W_OK)):
                 raise RuntimeError(f"VAAPI device {device} is not accessible")
 
-            ffmpeg_bin = shutil.which("ffmpeg")
-            if not ffmpeg_bin:
-                raise RuntimeError("ffmpeg binary is required for VAAPI hardware encoding")
-
             dims = (frame.width, frame.height)
-            if (
-                self._vaapi_proc is None
-                or self._vaapi_proc.poll() is not None
-                or self._hw_dims != dims
-            ):
-                self._cleanup_hw()
-                bitrate_val = int(self.target_bitrate or target_bitrate)
-                vf_chain = build_ffmpeg_vf_filter(
-                    flip_h=vaapi_flip_h,
-                    flip_v=vaapi_flip_v,
-                    rotate90=vaapi_rotate90,
-                    include_vaapi_hwupload=True,
-                    use_vaapi_transpose=True,
-                )
-                cmd = [
-                    ffmpeg_bin,
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-fflags",
-                    "nobuffer",
-                    "-flags",
-                    "low_delay",
-                    "-f",
-                    "rawvideo",
-                    "-pix_fmt",
-                    "nv12",
-                    "-s",
-                    f"{frame.width}x{frame.height}",
-                    "-r",
-                    str(fps),
-                    "-i",
-                    "pipe:0",
-                    "-vaapi_device",
-                    device,
-                    "-vf",
-                    vf_chain,
-                    "-c:v",
-                    "h264_vaapi",
-                    "-profile:v",
-                    "578",  # Constrained Baseline
-                    "-bf",
-                    "0",
-                    "-g",
-                    str(fps),
-                    "-b:v",
-                    str(bitrate_val),
-                    "-f",
-                    "h264",
-                    "pipe:1",
-                ]
-                self._vaapi_proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=0,
-                )
-                self._hw_dims = dims
-                self._start_vaapi_reader(self._vaapi_proc)
+            # Check if an existing ffmpeg VAAPI subprocess died unexpectedly
+            if self._vaapi_proc is not None and self._vaapi_proc.poll() is not None:
+                rc = self._vaapi_proc.returncode
+                stderr_msg = " | ".join(self._vaapi_stderr) or "no stderr output"
+                has_transforms = bool(vaapi_flip_h or vaapi_flip_v or vaapi_rotate90)
+                if self._use_vaapi_transpose and has_transforms:
+                    active_log.warning(
+                        "[OctoCam HW] FFmpeg h264_vaapi with GPU transpose_vaapi exited (rc=%s, stderr='%s'); retrying h264_vaapi with pre-upload software flip/transpose.",
+                        rc,
+                        stderr_msg,
+                    )
+                    self._use_vaapi_transpose = False
+                    self._cleanup_hw()
+                else:
+                    raise RuntimeError(
+                        f"FFmpeg h264_vaapi subprocess exited with code {rc}: {stderr_msg}"
+                    )
+
+            just_launched = False
+            if self._vaapi_proc is None or self._hw_dims != dims:
+                self._launch_vaapi_ffmpeg(frame.width, frame.height)
+                just_launched = True
 
             # Reuse a single persistent VideoReformatter so SwsContext is not recreated per frame
             frame = self._reformat_frame(frame, "nv12")
-
             raw_bytes = frame.to_ndarray().tobytes()
-            assert self._vaapi_proc.stdin is not None
-            self._vaapi_proc.stdin.write(raw_bytes)
-            self._vaapi_proc.stdin.flush()
 
-            chunk = self._drain_vaapi_output(timeout=0.05)
+            try:
+                assert self._vaapi_proc is not None and self._vaapi_proc.stdin is not None
+                self._vaapi_proc.stdin.write(raw_bytes)
+                self._vaapi_proc.stdin.flush()
+            except BrokenPipeError as exc:
+                rc = self._vaapi_proc.poll() if self._vaapi_proc else None
+                stderr_msg = " | ".join(self._vaapi_stderr) or str(exc)
+                has_transforms = bool(vaapi_flip_h or vaapi_flip_v or vaapi_rotate90)
+                if self._use_vaapi_transpose and has_transforms:
+                    active_log.warning(
+                        "[OctoCam HW] FFmpeg h264_vaapi broken pipe with GPU transpose_vaapi (rc=%s, stderr='%s'); retrying h264_vaapi with pre-upload flip/transpose.",
+                        rc,
+                        stderr_msg,
+                    )
+                    self._use_vaapi_transpose = False
+                    self._launch_vaapi_ffmpeg(frame.width, frame.height)
+                    assert self._vaapi_proc is not None and self._vaapi_proc.stdin is not None
+                    self._vaapi_proc.stdin.write(raw_bytes)
+                    self._vaapi_proc.stdin.flush()
+                    just_launched = True
+                else:
+                    raise RuntimeError(
+                        f"FFmpeg h264_vaapi broken pipe (rc={rc}): {stderr_msg}"
+                    ) from exc
+
+            # Give ffmpeg slightly longer on the first frame to initialize VAAPI
+            drain_timeout = 0.35 if just_launched else 0.05
+            chunk = self._drain_vaapi_output(timeout=drain_timeout)
+
+            if not chunk and self._vaapi_proc is not None and self._vaapi_proc.poll() is not None:
+                rc = self._vaapi_proc.returncode
+                stderr_msg = " | ".join(self._vaapi_stderr) or "no stderr output"
+                has_transforms = bool(vaapi_flip_h or vaapi_flip_v or vaapi_rotate90)
+                if self._use_vaapi_transpose and has_transforms:
+                    active_log.warning(
+                        "[OctoCam HW] FFmpeg h264_vaapi exited during initialization with transpose_vaapi (rc=%s, stderr='%s'); retrying with pre-upload flip/transpose.",
+                        rc,
+                        stderr_msg,
+                    )
+                    self._use_vaapi_transpose = False
+                    self._launch_vaapi_ffmpeg(frame.width, frame.height)
+                    assert self._vaapi_proc is not None and self._vaapi_proc.stdin is not None
+                    self._vaapi_proc.stdin.write(raw_bytes)
+                    self._vaapi_proc.stdin.flush()
+                    chunk = self._drain_vaapi_output(timeout=0.35)
+                    if not chunk and self._vaapi_proc.poll() is not None:
+                        stderr_msg2 = " | ".join(self._vaapi_stderr) or "no stderr output"
+                        raise RuntimeError(
+                            f"FFmpeg h264_vaapi failed after retry (rc={self._vaapi_proc.returncode}): {stderr_msg2}"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"FFmpeg h264_vaapi failed on startup (rc={rc}): {stderr_msg}"
+                    )
+
             if chunk:
-                yield from self._split_bitstream(chunk)
+                nals = list(self._split_bitstream(chunk))
+                self._hw_frames_encoded += 1
+                self._hw_bytes_encoded += len(chunk)
+                if not self._logged_first_hw_packet:
+                    self._logged_first_hw_packet = True
+                    active_log.info(
+                        "[OctoCam HW] VAAPI H.264 hardware encoder ACTIVE on '%s': produced first H.264 bitstream chunk (%d bytes, %d NAL units, %dx%d, gpu_transpose=%s).",
+                        device,
+                        len(chunk),
+                        len(nals),
+                        frame.width,
+                        frame.height,
+                        self._use_vaapi_transpose,
+                    )
+                elif self._hw_frames_encoded % 300 == 0:
+                    active_log.info(
+                        "[OctoCam HW] VAAPI H.264 hardware encoder heartbeat: %d chunks encoded (%d bytes total).",
+                        self._hw_frames_encoded,
+                        self._hw_bytes_encoded,
+                    )
+                yield from nals
 
         def _start_vaapi_reader(self, proc: subprocess.Popen[bytes]) -> None:
             import queue as queue_mod
@@ -702,12 +1255,33 @@ def install_hardware_h264_encoder(
                 except Exception:
                     pass
 
-            reader_thread = threading.Thread(
+            def _stderr_reader() -> None:
+                stderr = proc.stderr
+                if stderr is None:
+                    return
+                try:
+                    for raw_line in iter(stderr.readline, b""):
+                        line_str = raw_line.decode("utf-8", errors="replace").strip()
+                        if line_str:
+                            self._vaapi_stderr.append(line_str)
+                            if len(self._vaapi_stderr) > 25:
+                                self._vaapi_stderr.pop(0)
+                            active_log.warning(
+                                "[OctoCam HW] [ffmpeg h264_vaapi stderr] %s", line_str
+                            )
+                except Exception:
+                    pass
+
+            threading.Thread(
                 target=_reader,
                 name="OctocamVAAPIReader",
                 daemon=True,
-            )
-            reader_thread.start()
+            ).start()
+            threading.Thread(
+                target=_stderr_reader,
+                name="OctocamVAAPIStderr",
+                daemon=True,
+            ).start()
 
         def _drain_vaapi_output(self, timeout: float = 0.05) -> bytes:
             import queue as queue_mod
@@ -860,6 +1434,12 @@ class WebRTCEngine:
     ) -> Dict[str, str]:
         from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
+        offered_codecs = _extract_sdp_video_codecs(sdp)
+        self._logger.info(
+            "[OctoCam HW] Incoming WebRTC SDP offer (video codecs offered by browser: %s)",
+            offered_codecs,
+        )
+
         video_track = self._get_or_create_video_track(config)
         self._configure_encoder_hardware(config)
 
@@ -875,27 +1455,85 @@ class WebRTCEngine:
                 await self._cleanup_pc(pc)
 
         pc.addTrack(video_track)
+        self._prefer_h264_on_pc(pc)
 
         offer = RTCSessionDescription(sdp=sdp, type=sdp_type)
         await pc.setRemoteDescription(offer)
+        self._prefer_h264_on_pc(pc)
 
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+
+        negotiated_codecs = _extract_sdp_video_codecs(pc.localDescription.sdp)
+        self._logger.info(
+            "[OctoCam HW] Outgoing WebRTC SDP answer negotiated video codecs: %s",
+            negotiated_codecs,
+        )
 
         return {
             "sdp": pc.localDescription.sdp,
             "type": pc.localDescription.type,
         }
 
+    def _prefer_h264_on_pc(self, pc: Any) -> None:
+        """Sets codec preferences on all video transceivers so `aiortc` selects `video/H264` over `video/VP8`."""
+        try:
+            import aiortc.codecs as aiortc_codecs
+
+            video_codecs = list(aiortc_codecs.CODECS.get("video", []))
+            h264_codecs = [
+                c
+                for c in video_codecs
+                if getattr(c, "mimeType", "").lower() == "video/h264"
+            ]
+            other_codecs = [
+                c
+                for c in video_codecs
+                if getattr(c, "mimeType", "").lower() != "video/h264"
+            ]
+            if not h264_codecs:
+                return
+            preferred = h264_codecs + other_codecs
+            for transceiver in pc.getTransceivers():
+                if getattr(transceiver, "kind", "") == "video" and hasattr(
+                    transceiver, "setCodecPreferences"
+                ):
+                    transceiver.setCodecPreferences(preferred)
+        except Exception as exc:
+            self._logger.debug(
+                "[OctoCam HW] Could not set H264 codec preferences on transceiver: %s",
+                exc,
+            )
+
     def _configure_encoder_hardware(self, config: EngineConfig) -> None:
         """
-        Configures `aiortc` H.264 target bitrate and installs the hardware-aware
-        `H264Encoder` (`h264_vaapi` with GPU `transpose_vaapi` / `h264_v4l2m2m`
-        with fallback to `libx264`).
+        Configures `aiortc` H.264 target bitrate, prioritizes `video/H264` in `aiortc.codecs.CODECS`,
+        and installs the hardware-aware `H264Encoder` (`h264_vaapi` with GPU `transpose_vaapi` /
+        `h264_v4l2m2m` with fallback to `libx264`).
         """
         try:
             import aiortc.codecs as aiortc_codecs
             import aiortc.codecs.h264 as aiortc_h264
+
+            # Reorder aiortc's global video codec list so video/H264 is prioritized over video/VP8
+            if hasattr(aiortc_codecs, "CODECS") and "video" in aiortc_codecs.CODECS:
+                video_codecs = list(aiortc_codecs.CODECS["video"])
+                h264_codecs = [
+                    c
+                    for c in video_codecs
+                    if getattr(c, "mimeType", "").lower() == "video/h264"
+                ]
+                other_codecs = [
+                    c
+                    for c in video_codecs
+                    if getattr(c, "mimeType", "").lower() != "video/h264"
+                ]
+                if h264_codecs:
+                    aiortc_codecs.CODECS["video"] = h264_codecs + other_codecs
+                    self._logger.info(
+                        "[OctoCam HW] Prioritized video/H264 in aiortc.codecs.CODECS['video']: %s",
+                        [getattr(c, "mimeType", "") for c in aiortc_codecs.CODECS["video"]],
+                    )
 
             target_bps = parse_bitrate_bps(config.bitrate)
             aiortc_h264.DEFAULT_BITRATE = target_bps
@@ -911,9 +1549,12 @@ class WebRTCEngine:
                 vaapi_flip_h=bool(getattr(self, "_rem_flip_h", config.flip_h)),
                 vaapi_flip_v=bool(getattr(self, "_rem_flip_v", config.flip_v)),
                 vaapi_rotate90=bool(getattr(self, "_rem_rotate90", config.rotate90)),
+                logger_instance=self._logger,
             )
         except Exception as exc:
-            self._logger.debug("Could not configure hardware H264 encoder: %s", exc)
+            self._logger.warning(
+                "[OctoCam HW] Could not configure hardware H264 encoder: %s", exc
+            )
 
     def _get_or_create_video_track(self, config: EngineConfig) -> Any:
         from aiortc.contrib.media import MediaPlayer, MediaRelay
@@ -926,7 +1567,10 @@ class WebRTCEngine:
             f"{int(config.flip_h)}|{int(config.flip_v)}|{int(config.rotate90)}"
         )
 
-        if self._player is None or self._active_source_signature != signature:
+        if (
+            getattr(self, "_source_track", None) is None
+            or self._active_source_signature != signature
+        ):
             self._close_player()
 
             # 1. Check if the source webcam supports in-camera hardware flipping/rotation
@@ -939,63 +1583,104 @@ class WebRTCEngine:
             rem_flip_h = bool(config.flip_h and not cam_hw["flip_h_applied"])
             rem_flip_v = bool(config.flip_v and not cam_hw["flip_v_applied"])
             rem_rotate90 = bool(config.rotate90 and not cam_hw["rotate90_applied"])
-            self._rem_flip_h = rem_flip_h
-            self._rem_flip_v = rem_flip_v
-            self._rem_rotate90 = rem_rotate90
 
-            player_kwargs = build_media_player_kwargs(config)
-            self._logger.info(
-                "Opening camera media player for '%s' (options=%s, camera_hw_transforms=%s, remaining_flip=(%s,%s,%s))",
-                player_kwargs["file"],
-                player_kwargs.get("options"),
-                cam_hw,
-                rem_flip_h,
-                rem_flip_v,
-                rem_rotate90,
+            # 2. Attempt FFmpeg VAAPI hardware decoding (`-hwaccel vaapi ... -vf scale_vaapi=format=nv12`)
+            # when `hwaccel_mode == "vaapi"` is selected.
+            vaapi_track, gpu_transpose_done = create_vaapi_hwdecode_track(
+                config=config,
+                flip_h=rem_flip_h,
+                flip_v=rem_flip_v,
+                rotate90=rem_rotate90,
+                log=self._logger,
             )
-            try:
-                self._player = MediaPlayer(**player_kwargs)
-            except Exception as exc:
-                # If VAAPI hwaccel decode failed on open, retry without hwaccel
-                opts = dict(player_kwargs.get("options") or {})
-                if "hwaccel" in opts:
-                    self._logger.warning(
-                        "Opening stream with VAAPI hwaccel failed (%s); retrying with software decode.",
-                        exc,
-                    )
-                    opts.pop("hwaccel", None)
-                    opts.pop("hwaccel_device", None)
-                    player_kwargs["options"] = opts
-                    self._player = MediaPlayer(**player_kwargs)
+
+            if vaapi_track is not None:
+                self._vaapi_decode_track = vaapi_track
+                if gpu_transpose_done:
+                    self._rem_flip_h = False
+                    self._rem_flip_v = False
+                    self._rem_rotate90 = False
                 else:
-                    raise
-
-            if self._player.video is None:
-                self._close_player()
-                raise RuntimeError(
-                    f"Media source '{config.stream_source}' does not provide a video stream."
+                    self._rem_flip_h = rem_flip_h
+                    self._rem_flip_v = rem_flip_v
+                    self._rem_rotate90 = rem_rotate90
+                self._source_track = vaapi_track
+                self._logger.info(
+                    "[OctoCam HW] Using FFmpeg VAAPI hardware decode track (gpu_transpose_done=%s, remaining_encode_transforms=(%s,%s,%s)).",
+                    gpu_transpose_done,
+                    self._rem_flip_h,
+                    self._rem_flip_v,
+                    self._rem_rotate90,
                 )
-
-            # 2. When VAAPI hardware encoding is active, `transpose_vaapi` on the GPU handles
-            # any remaining flip/rotation so we skip the CPU `av.filter.Graph` track wrapper.
-            hw_mode = (config.hwaccel_mode or "none").strip().lower()
-            vaapi_dev = (config.vaapi_device or "/dev/dri/renderD128").strip()
-            vaapi_gpu_transpose_active = bool(
-                hw_mode == "vaapi"
-                and os.path.exists(vaapi_dev)
-                and os.access(vaapi_dev, os.R_OK | os.W_OK)
-                and shutil.which("ffmpeg")
-            )
-
-            if vaapi_gpu_transpose_active:
-                self._source_track = self._player.video
             else:
-                self._source_track = create_transformed_video_track(
-                    source_track=self._player.video,
-                    flip_h=rem_flip_h,
-                    flip_v=rem_flip_v,
-                    rotate90=rem_rotate90,
+                self._rem_flip_h = rem_flip_h
+                self._rem_flip_v = rem_flip_v
+                self._rem_rotate90 = rem_rotate90
+
+                player_kwargs = build_media_player_kwargs(config)
+                self._logger.info(
+                    "[OctoCam HW] Opening PyAV MediaPlayer for '%s' (format=%s, options=%s, camera_hw_transforms=%s, remaining_flip=(%s,%s,%s))",
+                    player_kwargs["file"],
+                    player_kwargs.get("format"),
+                    player_kwargs.get("options"),
+                    cam_hw,
+                    rem_flip_h,
+                    rem_flip_v,
+                    rem_rotate90,
                 )
+                try:
+                    self._player = MediaPlayer(**player_kwargs)
+                except Exception as exc:
+                    opts = dict(player_kwargs.get("options") or {})
+                    if "hwaccel" in opts:
+                        self._logger.warning(
+                            "[OctoCam HW] Opening MediaPlayer with VAAPI options failed (%s); retrying MediaPlayer with software decode options.",
+                            exc,
+                        )
+                        opts.pop("hwaccel", None)
+                        opts.pop("hwaccel_device", None)
+                        player_kwargs["options"] = opts
+                        self._player = MediaPlayer(**player_kwargs)
+                    else:
+                        raise
+
+                if self._player.video is None:
+                    self._close_player()
+                    raise RuntimeError(
+                        f"Media source '{config.stream_source}' does not provide a video stream."
+                    )
+
+                hw_mode = (config.hwaccel_mode or "none").strip().lower()
+                vaapi_dev = (config.vaapi_device or "/dev/dri/renderD128").strip()
+                vaapi_gpu_transpose_active = bool(
+                    hw_mode == "vaapi"
+                    and os.path.exists(vaapi_dev)
+                    and os.access(vaapi_dev, os.R_OK | os.W_OK)
+                    and shutil.which("ffmpeg")
+                )
+
+                if vaapi_gpu_transpose_active:
+                    self._logger.info(
+                        "[OctoCam HW] VAAPI hardware encoding is enabled; delegating remaining transforms (flip_h=%s, flip_v=%s, rotate90=%s) to VAAPI encode pipeline.",
+                        rem_flip_h,
+                        rem_flip_v,
+                        rem_rotate90,
+                    )
+                    self._source_track = self._player.video
+                else:
+                    self._logger.info(
+                        "[OctoCam HW] Using CPU FFmpegFrameFilter for remaining transforms (flip_h=%s, flip_v=%s, rotate90=%s).",
+                        rem_flip_h,
+                        rem_flip_v,
+                        rem_rotate90,
+                    )
+                    self._source_track = create_transformed_video_track(
+                        source_track=self._player.video,
+                        flip_h=rem_flip_h,
+                        flip_v=rem_flip_v,
+                        rotate90=rem_rotate90,
+                    )
+
             self._relay = MediaRelay()
             self._active_source_signature = signature
 
@@ -1014,6 +1699,12 @@ class WebRTCEngine:
             self._close_player()
 
     def _close_player(self) -> None:
+        if getattr(self, "_vaapi_decode_track", None) is not None:
+            try:
+                self._vaapi_decode_track.stop()
+            except Exception:
+                pass
+            self._vaapi_decode_track = None
         if getattr(self, "_source_track", None) is not None:
             try:
                 self._source_track.stop()
@@ -1027,8 +1718,8 @@ class WebRTCEngine:
             except Exception:
                 pass
             self._player = None
-            self._relay = None
-            self._active_source_signature = None
+        self._relay = None
+        self._active_source_signature = None
 
     async def _shutdown_async(self) -> None:
         coros = [pc.close() for pc in list(self._pcs)]
@@ -1127,9 +1818,11 @@ class WebRTCEngine:
         assert getattr(self, "_source_track", None) is not None
         sub_track = self._relay.subscribe(self._source_track)
         frame = await asyncio.wait_for(sub_track.recv(), timeout=4.0)
-        # If VAAPI GPU transpose was used for the stream, `_source_track` has not yet
-        # had ` _rem_flip_*` applied, so apply FFmpegFrameFilter for the snapshot.
-        if getattr(self, "_source_track", None) is getattr(self._player, "video", None):
+        # If transforms were delegated to the encoder (`_rem_flip_*`), apply them for the snapshot.
+        if getattr(self, "_source_track", None) in (
+            getattr(self._player, "video", None),
+            getattr(self, "_vaapi_decode_track", None),
+        ):
             ff_filter = FFmpegFrameFilter(
                 flip_h=bool(getattr(self, "_rem_flip_h", False)),
                 flip_v=bool(getattr(self, "_rem_flip_v", False)),

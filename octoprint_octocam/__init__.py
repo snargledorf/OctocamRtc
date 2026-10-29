@@ -62,13 +62,38 @@ class OctocamPlugin(
 
     def __init__(self) -> None:
         super().__init__()
-        self._logger = getattr(self, "_logger", logging.getLogger(__name__))
+        self._logger = getattr(
+            self, "_logger", logging.getLogger("octoprint.plugins.octocam")
+        )
         self._turn_provider = TurnCredentialProvider(logger=self._logger)
         self._webrtc_engine = WebRTCEngine(logger_instance=self._logger)
+
+    def initialize(self) -> None:
+        if hasattr(super(), "initialize"):
+            super().initialize()  # type: ignore[misc]
+        self._turn_provider._logger = self._logger
+        self._webrtc_engine._logger = self._logger
+        self._logger.info("OctoCam plugin initialized (logger attached).")
 
     # ~~ StartupPlugin mixin ~~
 
     def on_after_startup(self) -> None:
+        self._turn_provider._logger = self._logger
+        self._webrtc_engine._logger = self._logger
+        hw_mode = str(self._settings.get(["hwaccel_mode"]) or "vaapi")
+        vaapi_dev = str(self._settings.get(["vaapi_device"]) or "/dev/dri/renderD128")
+        stream_src = str(self._settings.get(["stream_source"]) or "/dev/video0")
+        self._logger.info(
+            "[OctoCam HW] Startup configuration: stream_source='%s', hwaccel_mode='%s', vaapi_device='%s', flip_h=%s, flip_v=%s, rotate90=%s",
+            stream_src,
+            hw_mode,
+            vaapi_dev,
+            self._settings.get_boolean(["flip_h"]),
+            self._settings.get_boolean(["flip_v"]),
+            self._settings.get_boolean(["rotate90"]),
+        )
+        if hw_mode == "vaapi":
+            probe_vaapi_support(vaapi_dev)
         try:
             default_webcam = self._settings.global_get(["webcam", "defaultWebcam"])
             classic_stream = self._settings.global_get(
