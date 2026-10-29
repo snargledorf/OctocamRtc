@@ -6,8 +6,13 @@ from unittest.mock import MagicMock, patch
 
 from octoprint_octocam.webrtc_engine import (
     EngineConfig,
+    FFmpegFrameFilter,
     WebRTCEngine,
+    apply_pil_transforms,
+    build_ffmpeg_vf_filter,
     build_media_player_kwargs,
+    configure_v4l2_camera_transforms,
+    create_transformed_video_track,
     parse_bitrate_bps,
     probe_vaapi_support,
 )
@@ -41,6 +46,7 @@ class TestWebRTCEngine(unittest.TestCase):
         self.assertEqual(kwargs["options"]["framerate"], "30")
         self.assertEqual(kwargs["options"]["hwaccel"], "vaapi")
         self.assertEqual(kwargs["options"]["hwaccel_device"], "/dev/dri/renderD128")
+        self.assertEqual(kwargs["options"]["input_format"], "mjpeg")
 
     def test_whep_proxy_mode(self) -> None:
         engine = WebRTCEngine()
@@ -72,6 +78,116 @@ class TestWebRTCEngine(unittest.TestCase):
         self.assertFalse(status["available"])
         self.assertFalse(status["device_exists"])
         self.assertIn("does not exist", status["message"])
+
+    def test_create_transformed_video_track_noop_when_disabled(self) -> None:
+        sentinel_track = MagicMock()
+        result = create_transformed_video_track(
+            sentinel_track, flip_h=False, flip_v=False, rotate90=False
+        )
+        self.assertIs(result, sentinel_track)
+
+    def test_build_ffmpeg_vf_filter(self) -> None:
+        self.assertEqual(
+            build_ffmpeg_vf_filter(
+                flip_h=True,
+                flip_v=True,
+                rotate90=True,
+                include_vaapi_hwupload=True,
+                use_vaapi_transpose=True,
+            ),
+            "format=nv12,hwupload,scale_vaapi=format=nv12,transpose_vaapi=dir=hflip,transpose_vaapi=dir=vflip,transpose_vaapi=dir=cclock",
+        )
+        self.assertEqual(
+            build_ffmpeg_vf_filter(
+                flip_h=True,
+                flip_v=False,
+                rotate90=True,
+                vaapi_hwdecode=True,
+                use_vaapi_transpose=True,
+            ),
+            "scale_vaapi=format=nv12,transpose_vaapi=dir=hflip,transpose_vaapi=dir=cclock",
+        )
+        self.assertEqual(
+            build_ffmpeg_vf_filter(
+                flip_h=True,
+                flip_v=True,
+                rotate90=True,
+                include_vaapi_hwupload=True,
+                use_vaapi_transpose=False,
+            ),
+            "hflip,vflip,transpose=cclock,format=nv12,hwupload",
+        )
+        self.assertEqual(
+            build_ffmpeg_vf_filter(
+                flip_h=True, flip_v=False, rotate90=False, include_vaapi_hwupload=False
+            ),
+            "hflip",
+        )
+
+    def test_configure_v4l2_camera_transforms_partial_hardware_support(self) -> None:
+        # Simulate a V4L2 camera that supports horizontal_flip and vertical_flip in hardware,
+        # but does not support 90-degree rotation in hardware.
+        def fake_set_ctrl(device_path: str, ctrl_name: str, cid: int, value: int) -> bool:
+            return ctrl_name in ("horizontal_flip", "vertical_flip")
+
+        with patch("octoprint_octocam.webrtc_engine.os.path.exists", return_value=True), patch(
+            "octoprint_octocam.webrtc_engine._set_v4l2_control", side_effect=fake_set_ctrl
+        ):
+            applied = configure_v4l2_camera_transforms(
+                stream_source="/dev/video0",
+                flip_h=True,
+                flip_v=True,
+                rotate90=True,
+            )
+
+        self.assertTrue(applied["flip_h_applied"])
+        self.assertTrue(applied["flip_v_applied"])
+        self.assertFalse(applied["rotate90_applied"])
+
+    def test_ffmpeg_frame_filter_graph_construction(self) -> None:
+        ff_filter = FFmpegFrameFilter(flip_h=True, flip_v=True, rotate90=True)
+        fake_frame = MagicMock()
+        fake_frame.width = 1280
+        fake_frame.height = 720
+        fake_frame.format.name = "yuv420p"
+        fake_frame.pts = 1000
+        fake_frame.time_base = "1/30"
+
+        mock_graph = MagicMock()
+        mock_out_frame = MagicMock()
+        mock_graph.pull.return_value = mock_out_frame
+
+        mock_av = MagicMock()
+        mock_av.filter.Graph.return_value = mock_graph
+
+        with patch.dict("sys.modules", {"av": mock_av}):
+            result = ff_filter.transform(fake_frame)
+
+        self.assertIs(result, mock_out_frame)
+        self.assertEqual(result.pts, 1000)
+        self.assertEqual(result.time_base, "1/30")
+        mock_graph.add.assert_any_call("hflip")
+        mock_graph.add.assert_any_call("vflip")
+        mock_graph.add.assert_any_call("transpose", "cclock")
+        mock_graph.configure.assert_called_once()
+        mock_graph.push.assert_called_once_with(fake_frame)
+
+    def test_apply_pil_transforms_calls_expected_transpose_operations(self) -> None:
+        fake_img = MagicMock()
+        fake_img.transpose.return_value = fake_img
+
+        mock_pil = MagicMock()
+        mock_pil.Transpose.FLIP_LEFT_RIGHT = "FLIP_LR"
+        mock_pil.Transpose.FLIP_TOP_BOTTOM = "FLIP_TB"
+        mock_pil.Transpose.ROTATE_90 = "ROT_90"
+
+        with patch.dict("sys.modules", {"PIL": MagicMock(Image=mock_pil)}):
+            out = apply_pil_transforms(
+                fake_img, flip_h=True, flip_v=True, rotate90=True
+            )
+
+        self.assertIs(out, fake_img)
+        self.assertEqual(fake_img.transpose.call_count, 3)
 
 
 if __name__ == "__main__":

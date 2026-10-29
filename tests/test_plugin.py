@@ -70,6 +70,19 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(payload["type"], "answer")
         plugin._webrtc_engine.handle_offer.assert_called_once()
 
+    def test_build_engine_config_includes_flip_and_rotate(self) -> None:
+        plugin = OctocamPlugin()
+        settings_data = plugin.get_settings_defaults()
+        settings_data["flip_h"] = True
+        settings_data["flip_v"] = True
+        settings_data["rotate90"] = True
+        plugin._settings = _FakeSettings(settings_data)
+
+        cfg = plugin._build_engine_config(include_turn=False)
+        self.assertTrue(cfg.flip_h)
+        self.assertTrue(cfg.flip_v)
+        self.assertTrue(cfg.rotate90)
+
 
 if __name__ == "__main__":
     unittest.main()

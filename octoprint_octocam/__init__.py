@@ -137,9 +137,6 @@ class OctocamPlugin(
 
     def get_webcam_configurations(self) -> Iterable[Any]:
         display_name = self._settings.get(["webcam_name"]) or "OctoCam WebRTC"
-        flip_h = self._settings.get_boolean(["flip_h"])
-        flip_v = self._settings.get_boolean(["flip_v"])
-        rotate90 = self._settings.get_boolean(["rotate90"])
         aspect_ratio_str = self._settings.get(["aspect_ratio"]) or "16:9"
         snapshot_url = (self._settings.get(["snapshot_url"]) or "").strip()
 
@@ -155,13 +152,15 @@ class OctocamPlugin(
                 if aspect_ratio_str == "4:3"
                 else RatioEnum.sixteen_nine
             )
+            # Flip and rotation are applied directly in the server encode/decode pipeline
+            # so the video stream and snapshots are already oriented for all devices and fullscreen.
             return [
                 Webcam(
                     name="octocam",
                     displayName=display_name,
-                    flipH=flip_h,
-                    flipV=flip_v,
-                    rotate90=rotate90,
+                    flipH=False,
+                    flipV=False,
+                    rotate90=False,
                     snapshotDisplay=snapshot_url or None,
                     canSnapshot=True,
                     compat=WebcamCompatibility(
@@ -183,9 +182,9 @@ class OctocamPlugin(
                 {
                     "name": "octocam",
                     "displayName": display_name,
-                    "flipH": flip_h,
-                    "flipV": flip_v,
-                    "rotate90": rotate90,
+                    "flipH": False,
+                    "flipV": False,
+                    "rotate90": False,
                     "canSnapshot": True,
                 }
             ]
@@ -327,6 +326,9 @@ class OctocamPlugin(
             or "/dev/dri/renderD128",
             whep_url=self._settings.get(["whep_url"]) or "",
             snapshot_url=self._settings.get(["snapshot_url"]) or "",
+            flip_h=bool(self._settings.get_boolean(["flip_h"])),
+            flip_v=bool(self._settings.get_boolean(["flip_v"])),
+            rotate90=bool(self._settings.get_boolean(["rotate90"])),
             ice_servers=ice_servers,
         )
 

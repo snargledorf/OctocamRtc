@@ -469,6 +469,12 @@ $(function () {
             self.vaapiStatusMessage("");
         };
 
+        self.onEventSettingsUpdated = function () {
+            if (self._isVisible) {
+                self.reconnectStream();
+            }
+        };
+
         // OctoPrint 1.9+ WebcamProviderPlugin visibility callback
         self.onWebcamVisibilityChange = function (visible) {
             self._isVisible = Boolean(visible);

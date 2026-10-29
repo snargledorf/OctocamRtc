@@ -1,12 +1,11 @@
 <div id="octocam_webcam_container" class="octocam-player-wrapper">
     <div class="octocam-video-viewport" data-bind="css: viewportCss()">
-        <div class="octocam-rotation-container" data-bind="css: { 'rotate90': rotate90() }">
+        <div class="octocam-rotation-container">
             <video id="octocam_webrtc_video"
                    class="octocam-video-element"
                    autoplay
                    playsinline
-                   muted
-                   data-bind="css: { 'flipH': flipH(), 'flipV': flipV() }"></video>
+                   muted></video>
         </div>
 
         <div class="octocam-overlay-bar">

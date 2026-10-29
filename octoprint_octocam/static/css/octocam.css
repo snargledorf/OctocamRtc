@@ -27,27 +27,11 @@
     justify-content: center;
 }
 
-.octocam-rotation-container.rotate90 {
-    transform: rotate(-90deg);
-}
-
 .octocam-video-element {
     width: 100%;
     height: 100%;
     object-fit: contain;
     display: block;
-}
-
-.octocam-video-element.flipH {
-    transform: scaleX(-1);
-}
-
-.octocam-video-element.flipV {
-    transform: scaleY(-1);
-}
-
-.octocam-video-element.flipH.flipV {
-    transform: scale(-1, -1);
 }
 
 .octocam-overlay-bar {
