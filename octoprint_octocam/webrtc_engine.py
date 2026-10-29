@@ -134,6 +134,7 @@ def probe_vaapi_support(vaapi_device: str = "/dev/dri/renderD128") -> Dict[str, 
             proc = subprocess.run(
                 [
                     ffmpeg_path,
+                    "-nostdin",
                     "-hide_banner",
                     "-loglevel",
                     "error",
@@ -325,6 +326,7 @@ def build_ffmpeg_h264_cmd(
 
     cmd: List[str] = [
         ffmpeg_bin,
+        "-nostdin",
         "-hide_banner",
         "-loglevel",
         "warning",
@@ -502,6 +504,9 @@ class EncodedH264Frame:
         self.time_base = time_base
         self.is_keyframe = is_keyframe
 
+    def __bytes__(self) -> bytes:
+        return self.bitstream
+
 
 def decode_h264_frame_to_jpeg(h264_annexb: bytes, quality: int = 85) -> bytes:
     """Decodes a single H.264 Annex-B keyframe (SPS + PPS + IDR) into JPEG bytes."""
@@ -531,6 +536,7 @@ def decode_h264_frame_to_jpeg(h264_annexb: bytes, quality: int = 85) -> bytes:
         proc = subprocess.run(
             [
                 ffmpeg_bin,
+                "-nostdin",
                 "-hide_banner",
                 "-loglevel",
                 "error",
@@ -792,6 +798,7 @@ class FFmpegH264Stream:
                 self._pts_step = int(90000 // fps)
                 self._time_base = fractions.Fraction(1, 90000)
                 self._last_au: Optional[bytes] = stream_ref.latest_keyframe
+                self._sent_keyframe = False
 
             async def recv(self) -> EncodedH264Frame:
                 loop = asyncio.get_running_loop()
@@ -808,6 +815,11 @@ class FFmpegH264Stream:
                         raise RuntimeError(
                             f"FFmpeg stream process exited with code {stream_ref._proc.returncode}"
                         )
+
+                if not self._sent_keyframe:
+                    self._sent_keyframe = True
+                    if stream_ref.latest_keyframe is not None:
+                        au = stream_ref.latest_keyframe
 
                 if au is not None:
                     self._last_au = au
@@ -878,6 +890,14 @@ def install_hardware_h264_encoder(
     base_encoder_cls = aiortc_h264_module._OriginalH264Encoder
 
     class PassthroughH264Encoder(base_encoder_cls):  # type: ignore[misc, valid-type]
+        def pack(self, packet: Any) -> Tuple[List[bytes], int]:
+            bitstream = getattr(packet, "bitstream", None)
+            if bitstream is not None:
+                packages = self._split_bitstream(bitstream)
+                timestamp = int(getattr(packet, "pts", 0))
+                return self._packetize(packages), timestamp
+            return super().pack(packet)
+
         def encode(
             self, frame: Any, force_keyframe: bool = False
         ) -> Tuple[List[bytes], int]:
@@ -1295,7 +1315,7 @@ class WebRTCEngine:
 
         ffmpeg_bin = shutil.which("ffmpeg")
         if ffmpeg_bin:
-            cmd = [ffmpeg_bin, "-hide_banner", "-loglevel", "error"]
+            cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "error"]
             cmd.extend(build_ffmpeg_input_args(config, pipeline_mode="software"))
             vf_chain = build_ffmpeg_vf_filter(
                 flip_h=config.flip_h,

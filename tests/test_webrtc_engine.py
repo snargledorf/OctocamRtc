@@ -92,6 +92,7 @@ class TestWebRTCEngine(unittest.TestCase):
         cmd = build_ffmpeg_h264_cmd(
             config, pipeline_mode="vaapi_hw", ffmpeg_bin="/usr/bin/ffmpeg"
         )
+        self.assertIn("-nostdin", cmd)
         self.assertIn("-hwaccel", cmd)
         self.assertIn("vaapi", cmd)
         self.assertIn("-input_format", cmd)
@@ -160,6 +161,9 @@ class TestWebRTCEngine(unittest.TestCase):
             def _packetize(self, packages):
                 return list(packages)
 
+            def pack(self, packet):
+                raise AssertionError("base pack should not be called for EncodedH264Frame")
+
             def encode(self, frame, force_keyframe=False):
                 return [b"software-fallback"], 999
 
@@ -179,6 +183,11 @@ class TestWebRTCEngine(unittest.TestCase):
         payloads, timestamp = encoder.encode(hw_frame, False)
         self.assertEqual(payloads, [b"\x65\x88\x00"])
         self.assertEqual(timestamp, 3000)
+
+        pack_payloads, pack_timestamp = encoder.pack(hw_frame)
+        self.assertEqual(pack_payloads, [b"\x65\x88\x00"])
+        self.assertEqual(pack_timestamp, 3000)
+        self.assertEqual(bytes(hw_frame), b"\x00\x00\x00\x01\x65\x88\x00")
 
     def test_whep_proxy_mode(self) -> None:
         engine = WebRTCEngine()
