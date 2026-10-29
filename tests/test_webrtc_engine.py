@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
-    apply_pil_transforms,
     resolve_go2rtc_snapshot_url,
     resolve_go2rtc_streams_url,
     resolve_go2rtc_webrtc_url,
@@ -143,23 +142,6 @@ class TestWebRTCEngine(unittest.TestCase):
             "http://127.0.0.1:1984/api/frame.jpeg?src=nozzle_cam",
             timeout=5.0,
         )
-
-    def test_apply_pil_transforms_calls_expected_transpose_operations(self) -> None:
-        fake_img = MagicMock()
-        fake_img.transpose.return_value = fake_img
-
-        mock_pil = MagicMock()
-        mock_pil.Transpose.FLIP_LEFT_RIGHT = "FLIP_LR"
-        mock_pil.Transpose.FLIP_TOP_BOTTOM = "FLIP_TB"
-        mock_pil.Transpose.ROTATE_90 = "ROT_90"
-
-        with patch.dict("sys.modules", {"PIL": MagicMock(Image=mock_pil)}):
-            out = apply_pil_transforms(
-                fake_img, flip_h=True, flip_v=True, rotate90=True
-            )
-
-        self.assertIs(out, fake_img)
-        self.assertEqual(fake_img.transpose.call_count, 3)
 
 
 if __name__ == "__main__":

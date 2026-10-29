@@ -30,7 +30,6 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(defaults["go2rtc_url"], "http://127.0.0.1:1984")
         self.assertEqual(defaults["go2rtc_stream"], "octocam")
         self.assertTrue(defaults["cloudflare_enabled"])
-        self.assertFalse(defaults["flip_h"])
 
         restricted = plugin.get_settings_restricted_paths()
         self.assertIn(["cloudflare_api_token"], restricted["admin"])
@@ -109,18 +108,16 @@ class TestOctocamPlugin(unittest.TestCase):
         call_kwargs = plugin._webrtc_engine.handle_offer.call_args[1]
         self.assertEqual(call_kwargs["stream_override"], "bed_cam")
 
-    def test_build_engine_config_includes_flip_and_rotate(self) -> None:
+    def test_build_engine_config(self) -> None:
         plugin = OctocamPlugin()
         settings_data = plugin.get_settings_defaults()
-        settings_data["flip_h"] = True
-        settings_data["flip_v"] = True
-        settings_data["rotate90"] = True
+        settings_data["go2rtc_url"] = "http://192.168.1.50:1984"
+        settings_data["go2rtc_stream"] = "custom_cam"
         plugin._settings = _FakeSettings(settings_data)
 
         cfg = plugin._build_engine_config(include_turn=False)
-        self.assertTrue(cfg.flip_h)
-        self.assertTrue(cfg.flip_v)
-        self.assertTrue(cfg.rotate90)
+        self.assertEqual(cfg.go2rtc_url, "http://192.168.1.50:1984")
+        self.assertEqual(cfg.go2rtc_stream, "custom_cam")
 
     def test_get_webcam_configurations_registers_all_go2rtc_streams(self) -> None:
         plugin = OctocamPlugin()

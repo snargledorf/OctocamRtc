@@ -1,7 +1,6 @@
 # coding=utf-8
 from __future__ import annotations
 
-import io
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
@@ -19,9 +18,6 @@ class EngineConfig:
     go2rtc_url: str = "http://127.0.0.1:1984"
     go2rtc_stream: str = "octocam"
     snapshot_url: str = ""
-    flip_h: bool = False
-    flip_v: bool = False
-    rotate90: bool = False
     ice_servers: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -66,25 +62,6 @@ def resolve_go2rtc_streams_url(go2rtc_url: str) -> str:
     if "/api/" in raw:
         raw = raw.split("/api/")[0]
     return f"{raw}/api/streams"
-
-
-def apply_pil_transforms(
-    image: Any,
-    flip_h: bool = False,
-    flip_v: bool = False,
-    rotate90: bool = False,
-) -> Any:
-    """Applies `flip_h`, `flip_v`, and `rotate90` (CCW) to a PIL Image for snapshots."""
-    from PIL import Image
-
-    transpose_enum = getattr(Image, "Transpose", Image)
-    if flip_h:
-        image = image.transpose(transpose_enum.FLIP_LEFT_RIGHT)
-    if flip_v:
-        image = image.transpose(transpose_enum.FLIP_TOP_BOTTOM)
-    if rotate90:
-        image = image.transpose(transpose_enum.ROTATE_90)
-    return image
 
 
 class WebRTCEngine:
@@ -202,23 +179,8 @@ class WebRTCEngine:
         try:
             resp = requests.get(snapshot_url, timeout=5.0)
             resp.raise_for_status()
+            return resp.content
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Failed to fetch snapshot from '{snapshot_url}': {exc}"
             ) from exc
-
-        if not (config.flip_h or config.flip_v or config.rotate90):
-            return resp.content
-
-        from PIL import Image
-
-        pil_img = Image.open(io.BytesIO(resp.content))
-        pil_img = apply_pil_transforms(
-            pil_img,
-            flip_h=config.flip_h,
-            flip_v=config.flip_v,
-            rotate90=config.rotate90,
-        )
-        out_buf = io.BytesIO()
-        pil_img.save(out_buf, format="JPEG", quality=85)
-        return out_buf.getvalue()

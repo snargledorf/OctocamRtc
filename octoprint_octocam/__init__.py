@@ -86,12 +86,9 @@ class OctocamPlugin(
         go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984")
         go2rtc_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam")
         self._logger.info(
-            "[OctoCam] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s', flip_h=%s, flip_v=%s, rotate90=%s",
+            "[OctoCam] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s'",
             go2rtc_url,
             go2rtc_stream,
-            self._settings.get_boolean(["flip_h"]),
-            self._settings.get_boolean(["flip_v"]),
-            self._settings.get_boolean(["rotate90"]),
         )
         try:
             default_webcam = self._settings.global_get(["webcam", "defaultWebcam"])
@@ -118,9 +115,6 @@ class OctocamPlugin(
             "go2rtc_stream": "octocam",
             "snapshot_url": "",
             "aspect_ratio": "16:9",  # "16:9" or "4:3"
-            "flip_h": False,
-            "flip_v": False,
-            "rotate90": False,
             "cloudflare_enabled": True,
             "cloudflare_turn_key_id": "",
             "cloudflare_api_token": "",
@@ -454,9 +448,6 @@ class OctocamPlugin(
             go2rtc_url=self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984",
             go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocam",
             snapshot_url=self._settings.get(["snapshot_url"]) or "",
-            flip_h=bool(self._settings.get_boolean(["flip_h"])),
-            flip_v=bool(self._settings.get_boolean(["flip_v"])),
-            rotate90=bool(self._settings.get_boolean(["rotate90"])),
             ice_servers=ice_servers,
         )
 

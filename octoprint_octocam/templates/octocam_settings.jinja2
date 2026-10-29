@@ -81,18 +81,9 @@
         </div>
 
         <div class="control-group">
-            <label class="control-label">{{ _('Orientation & Aspect Ratio') }}</label>
+            <label class="control-label" for="octocam_aspect_ratio">{{ _('Aspect Ratio') }}</label>
             <div class="controls">
-                <label class="checkbox inline">
-                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.flip_h"> {{ _('Flip Horizontally') }}
-                </label>
-                <label class="checkbox inline">
-                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.flip_v"> {{ _('Flip Vertically') }}
-                </label>
-                <label class="checkbox inline">
-                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.rotate90"> {{ _('Rotate 90° CCW') }}
-                </label>
-                <select class="input-small" style="margin-left: 12px;"
+                <select id="octocam_aspect_ratio" class="input-medium"
                         data-bind="value: settingsViewModel.settings.plugins.octocam.aspect_ratio">
                     <option value="16:9">16:9</option>
                     <option value="4:3">4:3</option>

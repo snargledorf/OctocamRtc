@@ -15,7 +15,6 @@ plugin_license = "AGPLv3"
 
 plugin_requires = [
     "requests>=2.28.0,<3.0.0",
-    "Pillow>=9.0.0",
 ]
 
 plugin_additional_data = []

@@ -27,22 +27,6 @@ $(function () {
         // Editable list of static STUN/TURN servers
         self.iceServersList = ko.observableArray([]);
 
-        // Orientation observables synced from plugin settings
-        self.flipH = ko.pureComputed(function () {
-            var p = self._pluginSettings();
-            return p && p.flip_h ? Boolean(p.flip_h()) : false;
-        });
-
-        self.flipV = ko.pureComputed(function () {
-            var p = self._pluginSettings();
-            return p && p.flip_v ? Boolean(p.flip_v()) : false;
-        });
-
-        self.rotate90 = ko.pureComputed(function () {
-            var p = self._pluginSettings();
-            return p && p.rotate90 ? Boolean(p.rotate90()) : false;
-        });
-
         self.viewportCss = ko.pureComputed(function () {
             var p = self._pluginSettings();
             var ratio = p && p.aspect_ratio ? p.aspect_ratio() : "16:9";
