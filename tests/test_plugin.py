@@ -83,6 +83,21 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertTrue(cfg.flip_v)
         self.assertTrue(cfg.rotate90)
 
+    def test_get_webcam_configurations_always_sets_string_snapshot_display(self) -> None:
+        plugin = OctocamPlugin()
+        plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+
+        configs = list(plugin.get_webcam_configurations())
+        self.assertEqual(len(configs), 1)
+        cam = configs[0]
+        snapshot_display = (
+            cam["snapshotDisplay"]
+            if isinstance(cam, dict)
+            else getattr(cam, "snapshotDisplay", None)
+        )
+        self.assertIsInstance(snapshot_display, str)
+        self.assertTrue(len(snapshot_display) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()

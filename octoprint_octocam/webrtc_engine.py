@@ -1028,6 +1028,24 @@ class WebRTCEngine:
             pil_img.save(out_buf, format="JPEG", quality=85)
             return out_buf.getvalue()
 
+        # If a live WebRTC stream is already open on the camera, grab a frame from the active
+        # MediaRelay so we don't collide with V4L2 exclusive device access (/dev/videoX EBUSY).
+        if (
+            self._loop is not None
+            and self._relay is not None
+            and getattr(self, "_source_track", None) is not None
+        ):
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._capture_from_active_relay_async(), self._loop
+                )
+                return future.result(timeout=5.0)
+            except Exception as exc:
+                self._logger.debug(
+                    "Could not capture snapshot from active WebRTC relay (%s); falling back to direct open.",
+                    exc,
+                )
+
         import av
 
         cam_hw = configure_v4l2_camera_transforms(
@@ -1067,3 +1085,22 @@ class WebRTCEngine:
             container.close()
 
         raise RuntimeError("No video frame could be decoded for snapshot.")
+
+    async def _capture_from_active_relay_async(self) -> bytes:
+        assert self._relay is not None
+        assert getattr(self, "_source_track", None) is not None
+        sub_track = self._relay.subscribe(self._source_track)
+        frame = await asyncio.wait_for(sub_track.recv(), timeout=4.0)
+        # If VAAPI GPU transpose was used for the stream, `_source_track` has not yet
+        # had ` _rem_flip_*` applied, so apply FFmpegFrameFilter for the snapshot.
+        if getattr(self, "_source_track", None) is getattr(self._player, "video", None):
+            ff_filter = FFmpegFrameFilter(
+                flip_h=bool(getattr(self, "_rem_flip_h", False)),
+                flip_v=bool(getattr(self, "_rem_flip_v", False)),
+                rotate90=bool(getattr(self, "_rem_rotate90", False)),
+            )
+            frame = ff_filter.transform(frame)
+        pil_img = frame.to_image()
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()

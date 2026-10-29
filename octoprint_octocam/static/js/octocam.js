@@ -475,10 +475,26 @@ $(function () {
             }
         };
 
+        self._hideUnconfiguredClassicBanner = function () {
+            // If Classic Webcam is unconfigured and showing its "? Webcam not configured..."
+            // placeholder alongside OctoCam, hide that placeholder container.
+            var classicContainer = document.getElementById("webcam_plugin_classicwebcam");
+            if (classicContainer && !classicContainer.querySelector("img, video")) {
+                classicContainer.style.display = "none";
+            }
+            $("#webcam_container p, #control p").each(function () {
+                var txt = ($(this).text() || "").trim();
+                if (txt.indexOf("Webcam not configured") !== -1) {
+                    $(this).closest("div").hide();
+                }
+            });
+        };
+
         // OctoPrint 1.9+ WebcamProviderPlugin visibility callback
         self.onWebcamVisibilityChange = function (visible) {
             self._isVisible = Boolean(visible);
             if (visible) {
+                self._hideUnconfiguredClassicBanner();
                 self.startStream();
             } else {
                 self.stopStream();
@@ -489,6 +505,7 @@ $(function () {
         self.onAfterTabChange = function (current) {
             if (current === "#control") {
                 self._isVisible = true;
+                self._hideUnconfiguredClassicBanner();
                 self.startStream();
             } else if (self._isVisible && current !== "#control") {
                 self._isVisible = false;
@@ -500,6 +517,6 @@ $(function () {
     OCTOPRINT_VIEWMODELS.push({
         construct: OctocamViewModel,
         dependencies: ["settingsViewModel"],
-        elements: ["#settings_plugin_octocam", "#octocam_webcam_container"]
+        elements: ["#settings_plugin_octocam", "#webcam_plugin_octocam"]
     });
 });

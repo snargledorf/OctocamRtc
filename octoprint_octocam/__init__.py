@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - fallback for test environments without
 try:
     import octoprint.plugin
 
+    _BaseStartupPlugin = octoprint.plugin.StartupPlugin
     _BaseSettingsPlugin = octoprint.plugin.SettingsPlugin
     _BaseAssetPlugin = octoprint.plugin.AssetPlugin
     _BaseTemplatePlugin = octoprint.plugin.TemplatePlugin
@@ -19,6 +20,9 @@ try:
     _BaseWebcamProviderPlugin = octoprint.plugin.WebcamProviderPlugin
     _BaseShutdownPlugin = octoprint.plugin.ShutdownPlugin
 except ImportError:  # pragma: no cover - fallback for unit testing outside OctoPrint
+    class _BaseStartupPlugin:
+        pass
+
     class _BaseSettingsPlugin:
         pass
 
@@ -46,6 +50,7 @@ from octoprint_octocam.webrtc_engine import (
 
 
 class OctocamPlugin(
+    _BaseStartupPlugin,
     _BaseSettingsPlugin,
     _BaseAssetPlugin,
     _BaseTemplatePlugin,
@@ -60,6 +65,25 @@ class OctocamPlugin(
         self._logger = getattr(self, "_logger", logging.getLogger(__name__))
         self._turn_provider = TurnCredentialProvider(logger=self._logger)
         self._webrtc_engine = WebRTCEngine(logger_instance=self._logger)
+
+    # ~~ StartupPlugin mixin ~~
+
+    def on_after_startup(self) -> None:
+        try:
+            default_webcam = self._settings.global_get(["webcam", "defaultWebcam"])
+            classic_stream = self._settings.global_get(
+                ["plugins", "classicwebcam", "stream"]
+            )
+            if not default_webcam or (
+                default_webcam in ("classic", "classicwebcam") and not classic_stream
+            ):
+                self._settings.global_set(["webcam", "defaultWebcam"], "octocam")
+                self._settings.save()
+                self._logger.info(
+                    "Set OctoPrint default webcam to 'octocam' (classicwebcam stream was unconfigured)."
+                )
+        except Exception as exc:
+            self._logger.debug("Could not check/update defaultWebcam on startup: %s", exc)
 
     # ~~ SettingsPlugin mixin ~~
 
@@ -126,19 +150,19 @@ class OctocamPlugin(
             },
             {
                 "type": "webcam",
-                "name": "OctoCam WebRTC",
                 "template": "octocam_webcam.jinja2",
                 "custom_bindings": True,
-                "div": "octocam_webcam_container",
             },
         ]
 
     # ~~ WebcamProviderPlugin mixin (OctoPrint 1.9+) ~~
 
     def get_webcam_configurations(self) -> Iterable[Any]:
-        display_name = self._settings.get(["webcam_name"]) or "OctoCam WebRTC"
-        aspect_ratio_str = self._settings.get(["aspect_ratio"]) or "16:9"
-        snapshot_url = (self._settings.get(["snapshot_url"]) or "").strip()
+        display_name = str(self._settings.get(["webcam_name"]) or "OctoCam WebRTC")
+        aspect_ratio_str = str(self._settings.get(["aspect_ratio"]) or "16:9")
+        stream_source = str(self._settings.get(["stream_source"]) or "/dev/video0").strip()
+        snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
+        snapshot_display = snapshot_url or f"OctoCam ({stream_source})"
 
         try:
             from octoprint.schema.webcam import (
@@ -161,7 +185,7 @@ class OctocamPlugin(
                     flipH=False,
                     flipV=False,
                     rotate90=False,
-                    snapshotDisplay=snapshot_url or None,
+                    snapshotDisplay=snapshot_display,
                     canSnapshot=True,
                     compat=WebcamCompatibility(
                         stream="webrtc",
@@ -172,12 +196,12 @@ class OctocamPlugin(
                         snapshotSslValidation=True,
                     ),
                     extras={
-                        "streamRatio": aspect_ratio_str,
+                        "streamRatio": ratio.value if hasattr(ratio, "value") else aspect_ratio_str,
                     },
                 )
             ]
-        except ImportError:
-            # Fallback dictionary when running outside OctoPrint 1.9+ schema
+        except Exception as exc:
+            self._logger.warning("Falling back to dict webcam config: %s", exc)
             return [
                 {
                     "name": "octocam",
@@ -185,6 +209,7 @@ class OctocamPlugin(
                     "flipH": False,
                     "flipV": False,
                     "rotate90": False,
+                    "snapshotDisplay": snapshot_display,
                     "canSnapshot": True,
                 }
             ]
