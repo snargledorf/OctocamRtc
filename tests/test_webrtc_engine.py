@@ -285,6 +285,49 @@ class TestWebRTCEngine(unittest.TestCase):
         self.assertIsNone(track)
         self.assertFalse(gpu_transpose)
 
+    def test_relay_subscriber_stopped_on_snapshot_and_pc_cleanup(self) -> None:
+        import asyncio
+
+        engine = WebRTCEngine()
+        engine._relay = MagicMock()
+        engine._source_track = MagicMock()
+
+        fake_sub_track = MagicMock()
+        fake_frame = MagicMock()
+        fake_img = MagicMock()
+
+        def fake_save(buf, format="JPEG", quality=85):
+            buf.write(b"jpeg-bytes")
+
+        fake_img.save.side_effect = fake_save
+        fake_frame.to_image.return_value = fake_img
+
+        async def fake_recv():
+            return fake_frame
+
+        fake_sub_track.recv = fake_recv
+        engine._relay.subscribe.return_value = fake_sub_track
+
+        jpeg = asyncio.run(engine._capture_from_active_relay_async())
+        self.assertEqual(jpeg, b"jpeg-bytes")
+        engine._relay.subscribe.assert_called_once_with(
+            engine._source_track, buffered=False
+        )
+        fake_sub_track.stop.assert_called_once()
+
+        # Verify _cleanup_pc also stops the peer connection's subscribed relay track
+        fake_pc_sub_track = MagicMock()
+        fake_pc = MagicMock()
+        fake_pc._octocam_sub_track = fake_pc_sub_track
+
+        async def fake_close():
+            return None
+
+        fake_pc.close = fake_close
+        engine._pcs.add(fake_pc)
+        asyncio.run(engine._cleanup_pc(fake_pc))
+        fake_pc_sub_track.stop.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

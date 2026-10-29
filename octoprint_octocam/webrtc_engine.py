@@ -8,12 +8,32 @@ import os
 import shutil
 import subprocess
 import threading
+import weakref
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 import requests
 
 logger = logging.getLogger("octoprint.plugins.octocam")
+_ACTIVE_HW_ENCODERS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def _terminate_subprocess(proc: Optional[subprocess.Popen[bytes]]) -> None:
+    """Safely closes pipes, kills a subprocess, and reaps it to prevent zombie processes and pipe leaks."""
+    if proc is None:
+        return
+    for pipe in (proc.stdin, proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+    try:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=1.0)
+    except Exception:
+        pass
 
 
 def _silence_pyav_swscaler_warnings() -> None:
@@ -791,10 +811,7 @@ def create_vaapi_hwdecode_track(
 
         if first_frame_bytes is None:
             rc = proc.poll()
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            _terminate_subprocess(proc)
             stderr_summary = " | ".join(stderr_lines) or "no stderr output"
             active_log.warning(
                 "[OctoCam HW] FFmpeg VAAPI hardware decode attempt (gpu_transpose=%s) did not produce frames (rc=%s, stderr='%s').",
@@ -877,11 +894,15 @@ def create_vaapi_hwdecode_track(
 
             def stop(self) -> None:
                 super().stop()
-                if self._proc is not None:
+                self._last_frame = None
+                while not self._queue.empty():
                     try:
-                        self._proc.kill()
+                        self._queue.get_nowait()
                     except Exception:
-                        pass
+                        break
+                if self._proc is not None:
+                    _terminate_subprocess(self._proc)
+                    self._proc = None  # type: ignore[assignment]
 
         return (
             FFmpegVAAPIVideoStreamTrack(
@@ -959,6 +980,7 @@ def install_hardware_h264_encoder(
                 flip_v=vaapi_flip_v,
                 rotate90=vaapi_rotate90,
             )
+            _ACTIVE_HW_ENCODERS.add(self)
             active_log.info(
                 "[OctoCam HW] H264Encoder instance created by aiortc (configured_mode='%s', initial_hw_active=%s).",
                 mode,
@@ -1240,32 +1262,45 @@ def install_hardware_h264_encoder(
         def _start_vaapi_reader(self, proc: subprocess.Popen[bytes]) -> None:
             import queue as queue_mod
 
-            self._vaapi_queue: queue_mod.Queue[bytes] = queue_mod.Queue()
+            vaapi_queue: queue_mod.Queue[bytes] = queue_mod.Queue(maxsize=32)
+            self._vaapi_queue = vaapi_queue
+            stderr_list = self._vaapi_stderr
 
-            def _reader() -> None:
-                stdout = proc.stdout
+            # Do not reference `self` inside the reader threads so `HardwareH264Encoder`
+            # can be garbage-collected when its peer connection closes.
+            def _reader(
+                p: subprocess.Popen[bytes], q: queue_mod.Queue[bytes]
+            ) -> None:
+                stdout = p.stdout
                 if stdout is None:
                     return
                 try:
-                    while proc.poll() is None:
+                    while p.poll() is None:
                         data = os.read(stdout.fileno(), 65536)
                         if not data:
                             break
-                        self._vaapi_queue.put(data)
+                        if q.full():
+                            try:
+                                q.get_nowait()
+                            except queue_mod.Empty:
+                                pass
+                        q.put_nowait(data)
                 except Exception:
                     pass
 
-            def _stderr_reader() -> None:
-                stderr = proc.stderr
+            def _stderr_reader(
+                p: subprocess.Popen[bytes], lines_out: List[str]
+            ) -> None:
+                stderr = p.stderr
                 if stderr is None:
                     return
                 try:
                     for raw_line in iter(stderr.readline, b""):
                         line_str = raw_line.decode("utf-8", errors="replace").strip()
                         if line_str:
-                            self._vaapi_stderr.append(line_str)
-                            if len(self._vaapi_stderr) > 25:
-                                self._vaapi_stderr.pop(0)
+                            lines_out.append(line_str)
+                            if len(lines_out) > 25:
+                                lines_out.pop(0)
                             active_log.warning(
                                 "[OctoCam HW] [ffmpeg h264_vaapi stderr] %s", line_str
                             )
@@ -1274,11 +1309,13 @@ def install_hardware_h264_encoder(
 
             threading.Thread(
                 target=_reader,
+                args=(proc, vaapi_queue),
                 name="OctocamVAAPIReader",
                 daemon=True,
             ).start()
             threading.Thread(
                 target=_stderr_reader,
+                args=(proc, stderr_list),
                 name="OctocamVAAPIStderr",
                 daemon=True,
             ).start()
@@ -1298,11 +1335,14 @@ def install_hardware_h264_encoder(
 
         def _cleanup_hw(self) -> None:
             self._hw_codec = None
+            if getattr(self, "_vaapi_queue", None) is not None:
+                while not self._vaapi_queue.empty():
+                    try:
+                        self._vaapi_queue.get_nowait()
+                    except Exception:
+                        break
             if self._vaapi_proc is not None:
-                try:
-                    self._vaapi_proc.kill()
-                except Exception:
-                    pass
+                _terminate_subprocess(self._vaapi_proc)
                 self._vaapi_proc = None
 
         def __del__(self) -> None:
@@ -1446,6 +1486,7 @@ class WebRTCEngine:
         rtc_ice_servers = build_rtc_ice_servers(config.ice_servers)
         rtc_config = RTCConfiguration(iceServers=rtc_ice_servers)
         pc = RTCPeerConnection(configuration=rtc_config)
+        pc._octocam_sub_track = video_track
         self._pcs.add(pc)
 
         @pc.on("connectionstatechange")
@@ -1453,6 +1494,20 @@ class WebRTCEngine:
             self._logger.info("WebRTC peer connection state: %s", pc.connectionState)
             if pc.connectionState in ("failed", "closed", "disconnected"):
                 await self._cleanup_pc(pc)
+
+        async def _pc_connect_watchdog() -> None:
+            await asyncio.sleep(25.0)
+            if pc in self._pcs and getattr(pc, "connectionState", "") in (
+                "new",
+                "connecting",
+            ):
+                self._logger.warning(
+                    "[OctoCam HW] Peer connection remained in '%s' state after 25s; cleaning up.",
+                    pc.connectionState,
+                )
+                await self._cleanup_pc(pc)
+
+        asyncio.ensure_future(_pc_connect_watchdog())
 
         pc.addTrack(video_track)
         self._prefer_h264_on_pc(pc)
@@ -1686,11 +1741,21 @@ class WebRTCEngine:
 
         assert self._relay is not None
         assert getattr(self, "_source_track", None) is not None
-        return self._relay.subscribe(self._source_track)
+        try:
+            return self._relay.subscribe(self._source_track, buffered=False)
+        except TypeError:
+            return self._relay.subscribe(self._source_track)
 
     async def _cleanup_pc(self, pc: Any) -> None:
         if pc in self._pcs:
             self._pcs.discard(pc)
+        sub_track = getattr(pc, "_octocam_sub_track", None)
+        if sub_track is not None:
+            try:
+                sub_track.stop()
+            except Exception:
+                pass
+            pc._octocam_sub_track = None
         try:
             await pc.close()
         except Exception:
@@ -1699,6 +1764,11 @@ class WebRTCEngine:
             self._close_player()
 
     def _close_player(self) -> None:
+        for enc in list(_ACTIVE_HW_ENCODERS):
+            try:
+                enc._cleanup_hw()
+            except Exception:
+                pass
         if getattr(self, "_vaapi_decode_track", None) is not None:
             try:
                 self._vaapi_decode_track.stop()
@@ -1712,16 +1782,26 @@ class WebRTCEngine:
                 pass
             self._source_track = None
         if self._player is not None:
-            try:
-                if getattr(self._player, "video", None) is not None:
-                    self._player.video.stop()
-            except Exception:
-                pass
+            for attr in ("video", "audio"):
+                track = getattr(self._player, attr, None)
+                if track is not None:
+                    try:
+                        track.stop()
+                    except Exception:
+                        pass
             self._player = None
         self._relay = None
         self._active_source_signature = None
 
     async def _shutdown_async(self) -> None:
+        for pc in list(self._pcs):
+            sub_track = getattr(pc, "_octocam_sub_track", None)
+            if sub_track is not None:
+                try:
+                    sub_track.stop()
+                except Exception:
+                    pass
+                pc._octocam_sub_track = None
         coros = [pc.close() for pc in list(self._pcs)]
         self._pcs.clear()
         if coros:
@@ -1816,8 +1896,17 @@ class WebRTCEngine:
     async def _capture_from_active_relay_async(self) -> bytes:
         assert self._relay is not None
         assert getattr(self, "_source_track", None) is not None
-        sub_track = self._relay.subscribe(self._source_track)
-        frame = await asyncio.wait_for(sub_track.recv(), timeout=4.0)
+        try:
+            sub_track = self._relay.subscribe(self._source_track, buffered=False)
+        except TypeError:
+            sub_track = self._relay.subscribe(self._source_track)
+        try:
+            frame = await asyncio.wait_for(sub_track.recv(), timeout=4.0)
+        finally:
+            try:
+                sub_track.stop()
+            except Exception:
+                pass
         # If transforms were delegated to the encoder (`_rem_flip_*`), apply them for the snapshot.
         if getattr(self, "_source_track", None) in (
             getattr(self._player, "video", None),
