@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-logger = logging.getLogger("octoprint.plugins.octocam")
+logger = logging.getLogger("octoprint.plugins.octocamrtc")
 
 
 @dataclass
@@ -18,13 +18,13 @@ class EngineConfig:
     """Configuration snapshot for the go2rtc WebRTC media engine."""
 
     go2rtc_url: str = "http://127.0.0.1:1984"
-    go2rtc_stream: str = "octocam"
+    go2rtc_stream: str = "octocamrtc"
     stream_url: str = ""
     snapshot_url: str = ""
     ice_servers: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def resolve_go2rtc_webrtc_url(go2rtc_url: str, stream_name: str = "octocam") -> str:
+def resolve_go2rtc_webrtc_url(go2rtc_url: str, stream_name: str = "octocamrtc") -> str:
     """
     Resolves the full go2rtc WebRTC / WHEP endpoint URL.
     Supports either a base URL (e.g. 'http://127.0.0.1:1984') or an already full
@@ -35,11 +35,11 @@ def resolve_go2rtc_webrtc_url(go2rtc_url: str, stream_name: str = "octocam") -> 
         raw = "http://127.0.0.1:1984"
     if "/api/webrtc" in raw or "/api/whep" in raw:
         return raw
-    stream = (stream_name or "octocam").strip()
+    stream = (stream_name or "octocamrtc").strip()
     return f"{raw}/api/webrtc?src={stream}"
 
 
-def resolve_go2rtc_mjpeg_url(go2rtc_url: str, stream_name: str = "octocam") -> str:
+def resolve_go2rtc_mjpeg_url(go2rtc_url: str, stream_name: str = "octocamrtc") -> str:
     """
     Resolves the go2rtc live MJPEG stream URL for `stream_name`.
     Extracts base URL and stream name if a full WHEP or stream endpoint was supplied.
@@ -51,13 +51,13 @@ def resolve_go2rtc_mjpeg_url(go2rtc_url: str, stream_name: str = "octocam") -> s
         base = raw.split("/api/")[0]
         parsed = urllib.parse.urlparse(raw)
         params = urllib.parse.parse_qs(parsed.query)
-        stream = params.get("src", [stream_name or "octocam"])[0]
+        stream = params.get("src", [stream_name or "octocamrtc"])[0]
         return f"{base}/api/stream.mjpeg?src={stream}"
-    stream = (stream_name or "octocam").strip()
+    stream = (stream_name or "octocamrtc").strip()
     return f"{raw}/api/stream.mjpeg?src={stream}"
 
 
-def resolve_go2rtc_snapshot_url(go2rtc_url: str, stream_name: str = "octocam") -> str:
+def resolve_go2rtc_snapshot_url(go2rtc_url: str, stream_name: str = "octocamrtc") -> str:
     """
     Resolves the go2rtc live snapshot JPEG URL for `stream_name`.
     Extracts base URL and stream name if a full WHEP endpoint was supplied.
@@ -69,9 +69,9 @@ def resolve_go2rtc_snapshot_url(go2rtc_url: str, stream_name: str = "octocam") -
         base = raw.split("/api/")[0]
         parsed = urllib.parse.urlparse(raw)
         params = urllib.parse.parse_qs(parsed.query)
-        stream = params.get("src", [stream_name or "octocam"])[0]
+        stream = params.get("src", [stream_name or "octocamrtc"])[0]
         return f"{base}/api/frame.jpeg?src={stream}"
-    stream = (stream_name or "octocam").strip()
+    stream = (stream_name or "octocamrtc").strip()
     return f"{raw}/api/frame.jpeg?src={stream}"
 
 
@@ -113,7 +113,7 @@ class WebRTCEngine:
             resp = requests.get(api_url, timeout=timeout)
             if resp.status_code >= 400:
                 self._logger.warning(
-                    "[OctoCam go2rtc] Querying streams from '%s' returned HTTP %d",
+                    "[OctoCamRTC go2rtc] Querying streams from '%s' returned HTTP %d",
                     api_url,
                     resp.status_code,
                 )
@@ -124,7 +124,7 @@ class WebRTCEngine:
             return []
         except Exception as exc:
             self._logger.debug(
-                "[OctoCam go2rtc] Failed to query streams from '%s': %s",
+                "[OctoCamRTC go2rtc] Failed to query streams from '%s': %s",
                 api_url,
                 exc,
             )
@@ -141,11 +141,11 @@ class WebRTCEngine:
         Processes a client WebRTC SDP offer by proxying it to go2rtc
         and returning the SDP answer `{ "sdp": ..., "type": "answer" }`.
         """
-        stream = (stream_override or config.go2rtc_stream or "octocam").strip()
+        stream = (stream_override or config.go2rtc_stream or "octocamrtc").strip()
         webrtc_url = resolve_go2rtc_webrtc_url(config.go2rtc_url, stream)
 
         self._logger.info(
-            "[OctoCam go2rtc] Proxying WebRTC SDP offer to go2rtc stream '%s' (%s)",
+            "[OctoCamRTC go2rtc] Proxying WebRTC SDP offer to go2rtc stream '%s' (%s)",
             stream,
             webrtc_url,
         )
@@ -194,7 +194,7 @@ class WebRTCEngine:
         1. `config.snapshot_url` (if explicitly configured), or
         2. go2rtc's live frame API (`/api/frame.jpeg?src=<stream>`).
         """
-        stream = (stream_override or config.go2rtc_stream or "octocam").strip()
+        stream = (stream_override or config.go2rtc_stream or "octocamrtc").strip()
         snapshot_url = (config.snapshot_url or "").strip()
         if not snapshot_url:
             snapshot_url = resolve_go2rtc_snapshot_url(config.go2rtc_url, stream)
@@ -212,13 +212,13 @@ class WebRTCEngine:
             ) from exc
 
     def get_cached_snapshot(
-        self, stream: str = "octocam", max_age: Optional[float] = None
+        self, stream: str = "octocamrtc", max_age: Optional[float] = None
     ) -> Optional[bytes]:
         """
         Returns the most recently cached snapshot bytes for `stream`.
         If `max_age` (seconds) is given, returns None if the cached snapshot is older.
         """
-        stream_key = (stream or "octocam").strip()
+        stream_key = (stream or "octocamrtc").strip()
         with self._cache_lock:
             cached = self._snapshot_cache.get(stream_key)
             if cached is None:
@@ -236,7 +236,7 @@ class WebRTCEngine:
             return self.capture_snapshot(config, stream_override=stream)
         except Exception as exc:
             self._logger.debug(
-                "[OctoCam go2rtc] Background snapshot update failed for '%s': %s",
+                "[OctoCamRTC go2rtc] Background snapshot update failed for '%s': %s",
                 stream or config.go2rtc_stream,
                 exc,
             )

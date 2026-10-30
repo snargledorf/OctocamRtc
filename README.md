@@ -1,6 +1,6 @@
-# OctoPrint-Octocam
+# OctoPrint-OctocamRtc
 
-**OctoCam** is an OctoPrint 1.9+ `WebcamProviderPlugin` that brings low-latency **WebRTC video streaming** to OctoPrint with configurable **STUN/TURN servers** (including native **Cloudflare Calls TURN** short-lived credential generation), **Linux VAAPI hardware acceleration** (`h264_vaapi`), and optional **WHEP** media server proxying.
+**OctoCamRTC** is an OctoPrint 1.9+ `WebcamProviderPlugin` that brings low-latency **WebRTC video streaming** to OctoPrint with configurable **STUN/TURN servers** (including native **Cloudflare Calls TURN** short-lived credential generation), **Linux VAAPI hardware acceleration** (`h264_vaapi`), and optional **WHEP** media server proxying.
 
 ## Key Features
 
@@ -42,8 +42,8 @@ sudo usermod -aG video,render $USER
 
 1. Log in to the **Cloudflare Dashboard** and navigate to **Calls** -> **TURN Keys**.
 2. Click **Create TURN Key** and copy both the **TURN Key ID** and **API Token**.
-3. In OctoPrint, open **Settings** -> **OctoCam (WebRTC)**:
+3. In OctoPrint, open **Settings** -> **OctoCamRTC (WebRTC)**:
    - Enable **Dynamic Cloudflare TURN Credentials**.
    - Paste your **Cloudflare TURN Key ID** and **Cloudflare TURN API Token**.
    - Click **Test Cloudflare TURN** to verify credential generation.
-4. Select **OctoCam WebRTC** as your active webcam under **Settings** -> **Classic Webcam / Webcams**.
+4. Select **OctoCamRTC WebRTC** as your active webcam under **Settings** -> **Classic Webcam / Webcams**.

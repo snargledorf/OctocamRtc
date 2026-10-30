@@ -53,8 +53,8 @@ except ImportError:  # pragma: no cover - fallback for unit testing outside Octo
 
 import requests
 
-from octoprint_octocam.turn_provider import TurnCredentialError, TurnCredentialProvider
-from octoprint_octocam.webrtc_engine import (
+from octoprint_octocamrtc.turn_provider import TurnCredentialError, TurnCredentialProvider
+from octoprint_octocamrtc.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
     resolve_go2rtc_mjpeg_url,
@@ -63,7 +63,7 @@ from octoprint_octocam.webrtc_engine import (
 )
 
 
-class OctocamPlugin(
+class OctocamRtcPlugin(
     _BaseStartupPlugin,
     _BaseSettingsPlugin,
     _BaseAssetPlugin,
@@ -78,7 +78,7 @@ class OctocamPlugin(
     def __init__(self) -> None:
         super().__init__()
         self._logger = getattr(
-            self, "_logger", logging.getLogger("octoprint.plugins.octocam")
+            self, "_logger", logging.getLogger("octoprint.plugins.octocamrtc")
         )
         self._turn_provider = TurnCredentialProvider(logger=self._logger)
         self._webrtc_engine = WebRTCEngine(logger_instance=self._logger)
@@ -90,7 +90,7 @@ class OctocamPlugin(
             super().initialize()  # type: ignore[misc]
         self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
-        self._logger.info("OctoCam plugin initialized (go2rtc backend).")
+        self._logger.info("OctoCamRTC plugin initialized (go2rtc backend).")
 
     # ~~ StartupPlugin mixin ~~
 
@@ -98,9 +98,9 @@ class OctocamPlugin(
         self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
         go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984")
-        go2rtc_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam")
+        go2rtc_stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc")
         self._logger.info(
-            "[OctoCam] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s'",
+            "[OctoCamRTC] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s'",
             go2rtc_url,
             go2rtc_stream,
         )
@@ -112,10 +112,10 @@ class OctocamPlugin(
             if not default_webcam or (
                 default_webcam in ("classic", "classicwebcam") and not classic_stream
             ):
-                self._settings.global_set(["webcam", "defaultWebcam"], "octocam")
+                self._settings.global_set(["webcam", "defaultWebcam"], "octocamrtc")
                 self._settings.save()
                 self._logger.info(
-                    "Set OctoPrint default webcam to 'octocam' (classicwebcam stream was unconfigured)."
+                    "Set OctoPrint default webcam to 'octocamrtc' (classicwebcam stream was unconfigured)."
                 )
         except Exception as exc:
             self._logger.debug("Could not check/update defaultWebcam on startup: %s", exc)
@@ -127,9 +127,9 @@ class OctocamPlugin(
 
     def get_settings_defaults(self) -> Dict[str, Any]:
         return {
-            "webcam_name": "OctoCam WebRTC",
+            "webcam_name": "OctoCamRTC WebRTC",
             "go2rtc_url": "http://127.0.0.1:1984",
-            "go2rtc_stream": "octocam",
+            "go2rtc_stream": "octocamrtc",
             "stream_url": "",
             "snapshot_url": "",
             "sync_octoprint_stream": True,
@@ -168,8 +168,8 @@ class OctocamPlugin(
 
     def get_assets(self) -> Dict[str, List[str]]:
         return {
-            "js": ["js/octocam.js"],
-            "css": ["css/octocam.css"],
+            "js": ["js/octocamrtc.js"],
+            "css": ["css/octocamrtc.css"],
         }
 
     # ~~ TemplatePlugin mixin ~~
@@ -178,13 +178,13 @@ class OctocamPlugin(
         return [
             {
                 "type": "settings",
-                "name": "OctoCam (WebRTC)",
-                "template": "octocam_settings.jinja2",
+                "name": "OctoCamRTC (WebRTC)",
+                "template": "octocamrtc_settings.jinja2",
                 "custom_bindings": True,
             },
             {
                 "type": "webcam",
-                "template": "octocam_webcam.jinja2",
+                "template": "octocamrtc_webcam.jinja2",
                 "custom_bindings": True,
             },
         ]
@@ -192,10 +192,10 @@ class OctocamPlugin(
     # ~~ WebcamProviderPlugin mixin (OctoPrint 1.9+) ~~
 
     def get_webcam_configurations(self) -> Iterable[Any]:
-        base_display_name = str(self._settings.get(["webcam_name"]) or "OctoCam WebRTC")
+        base_display_name = str(self._settings.get(["webcam_name"]) or "OctoCamRTC WebRTC")
         aspect_ratio_str = str(self._settings.get(["aspect_ratio"]) or "16:9")
         go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
-        active_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        active_stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
         custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
 
@@ -205,7 +205,7 @@ class OctocamPlugin(
         if active_stream and active_stream not in streams_to_register:
             streams_to_register.insert(0, active_stream)
         if not streams_to_register:
-            streams_to_register = ["octocam"]
+            streams_to_register = ["octocamrtc"]
 
         try:
             from octoprint.schema.webcam import (
@@ -223,7 +223,7 @@ class OctocamPlugin(
             configs = []
             for stream in streams_to_register:
                 is_primary = (stream == active_stream)
-                cam_name = "octocam" if is_primary else f"octocam_{stream}"
+                cam_name = "octocamrtc" if is_primary else f"octocamrtc_{stream}"
                 display = (
                     base_display_name
                     if len(streams_to_register) == 1
@@ -269,7 +269,7 @@ class OctocamPlugin(
             dict_configs = []
             for stream in streams_to_register:
                 is_primary = (stream == active_stream)
-                cam_name = "octocam" if is_primary else f"octocam_{stream}"
+                cam_name = "octocamrtc" if is_primary else f"octocamrtc_{stream}"
                 display = (
                     base_display_name
                     if len(streams_to_register) == 1
@@ -313,12 +313,14 @@ class OctocamPlugin(
             else str(provided_webcam.get("name", ""))
         )
         stream_override = None
-        if cam_name.startswith("octocam_"):
+        if cam_name.startswith("octocamrtc_"):
+            stream_override = cam_name[len("octocamrtc_") :]
+        elif cam_name.startswith("octocam_"):
             stream_override = cam_name[len("octocam_") :]
 
         stream_key = (
             stream_override
-            or str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+            or str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         )
         # Check if we have a fresh snapshot cached (< 2.5s old)
         cached = self._webrtc_engine.get_cached_snapshot(stream_key, max_age=2.5)
@@ -364,7 +366,7 @@ class OctocamPlugin(
                 or "http://127.0.0.1:1984"
             )
             streams = self._webrtc_engine.get_available_streams(go2rtc_url)
-            selected = str(self._settings.get(["go2rtc_stream"]) or "octocam")
+            selected = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc")
             return self._json_response(
                 {
                     "streams": streams,
@@ -444,7 +446,7 @@ class OctocamPlugin(
             stream_name = (
                 data.get("go2rtc_stream")
                 or self._settings.get(["go2rtc_stream"])
-                or "octocam"
+                or "octocamrtc"
             ).strip()
             custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
             mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(go2rtc_url, stream_name)
@@ -480,7 +482,7 @@ class OctocamPlugin(
     # ~~ BlueprintPlugin mixin ~~
 
     def is_blueprint_protected(self) -> bool:
-        """Allow public access to /plugin/octocam/snapshot for browser <img> poster tags."""
+        """Allow public access to /plugin/octocamrtc/snapshot for browser <img> poster tags."""
         return False
 
     @_BaseBlueprintPlugin.route("/snapshot", methods=["GET"])
@@ -493,7 +495,7 @@ class OctocamPlugin(
         if flask is not None and hasattr(flask, "request") and flask.request:
             stream = flask.request.args.get("src") or flask.request.args.get("stream")
         if not stream:
-            stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+            stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
 
         # 1. Try to serve directly from in-memory cache
         jpeg_bytes = self._webrtc_engine.get_cached_snapshot(stream)
@@ -506,7 +508,7 @@ class OctocamPlugin(
                 )
             except Exception as exc:
                 self._logger.debug(
-                    "[OctoCam] Snapshot capture unavailable for '%s': %s", stream, exc
+                    "[OctoCamRTC] Snapshot capture unavailable for '%s': %s", stream, exc
                 )
                 if flask is not None:
                     return flask.Response(
@@ -540,18 +542,18 @@ class OctocamPlugin(
         self._snapshot_stop_event.clear()
         self._snapshot_worker_thread = threading.Thread(
             target=self._snapshot_worker_loop,
-            name="OctoCamSnapshotWorker",
+            name="OctoCamRtcSnapshotWorker",
             daemon=True,
         )
         self._snapshot_worker_thread.start()
-        self._logger.info("[OctoCam] Snapshot background caching worker started.")
+        self._logger.info("[OctoCamRTC] Snapshot background caching worker started.")
 
     def _stop_snapshot_worker(self) -> None:
         self._snapshot_stop_event.set()
         if self._snapshot_worker_thread and self._snapshot_worker_thread.is_alive():
             self._snapshot_worker_thread.join(timeout=1.5)
         self._snapshot_worker_thread = None
-        self._logger.info("[OctoCam] Snapshot background caching worker stopped.")
+        self._logger.info("[OctoCamRTC] Snapshot background caching worker stopped.")
 
     def _restart_snapshot_worker(self) -> None:
         self._stop_snapshot_worker()
@@ -563,14 +565,14 @@ class OctocamPlugin(
                 if bool(self._settings.get_boolean(["snapshot_caching_enabled"])):
                     config = self._build_engine_config(include_turn=False)
                     active_stream = str(
-                        self._settings.get(["go2rtc_stream"]) or "octocam"
+                        self._settings.get(["go2rtc_stream"]) or "octocamrtc"
                     ).strip()
                     self._webrtc_engine.update_snapshot_cache(
                         config, stream=active_stream
                     )
             except Exception as exc:
                 self._logger.debug(
-                    "[OctoCam] Snapshot cache cycle encountered error: %s", exc
+                    "[OctoCamRTC] Snapshot cache cycle encountered error: %s", exc
                 )
 
             interval = max(
@@ -599,7 +601,7 @@ class OctocamPlugin(
         ice_servers = self._resolve_ice_servers() if include_turn else []
         return EngineConfig(
             go2rtc_url=self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984",
-            go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocam",
+            go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocamrtc",
             stream_url=self._settings.get(["stream_url"]) or "",
             snapshot_url=self._settings.get(["snapshot_url"]) or "",
             ice_servers=ice_servers,
@@ -621,7 +623,7 @@ class OctocamPlugin(
             return
 
         go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
-        stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
         custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
 
@@ -647,12 +649,12 @@ class OctocamPlugin(
             if changed and hasattr(self._settings, "save"):
                 self._settings.save()
                 self._logger.info(
-                    "[OctoCam] Synchronized OctoPrint webcam stream URL: '%s' and snapshot URL: '%s'",
+                    "[OctoCamRTC] Synchronized OctoPrint webcam stream URL: '%s' and snapshot URL: '%s'",
                     mjpeg_url,
                     snap_url,
                 )
         except Exception as exc:
-            self._logger.warning("[OctoCam] Failed to sync OctoPrint webcam stream URL: %s", exc)
+            self._logger.warning("[OctoCamRTC] Failed to sync OctoPrint webcam stream URL: %s", exc)
 
     @staticmethod
     def _json_response(payload: Dict[str, Any], status: int = 200) -> Any:
@@ -666,27 +668,31 @@ class OctocamPlugin(
 
     def get_update_information(self) -> Dict[str, Any]:
         return {
-            "octocam": {
-                "displayName": "OctoCam (WebRTC + TURN)",
+            "octocamrtc": {
+                "displayName": "OctoCamRTC (WebRTC + TURN)",
                 "displayVersion": getattr(self, "_plugin_version", "0.1.0"),
                 "type": "github_release",
-                "user": "Ryan",
-                "repo": "Octocam",
+                "user": "snargledorf",
+                "repo": "OctocamRtc",
                 "current": getattr(self, "_plugin_version", "0.1.0"),
-                "pip": "https://github.com/Ryan/Octocam/archive/{target_version}.zip",
+                "pip": "https://github.com/snargledorf/OctocamRtc/archive/{target_version}.zip",
             }
         }
 
 
-__plugin_name__ = "OctoCam (WebRTC)"
+__plugin_name__ = "OctoCamRTC (WebRTC)"
 __plugin_pythoncompat__ = ">=3.9,<4"
 
 
 def __plugin_load__() -> None:
     global __plugin_implementation__
-    __plugin_implementation__ = OctocamPlugin()
+    __plugin_implementation__ = OctocamRtcPlugin()
 
     global __plugin_hooks__
     __plugin_hooks__ = {
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information
     }
+
+
+# Backwards compatibility alias
+OctocamPlugin = OctocamRtcPlugin

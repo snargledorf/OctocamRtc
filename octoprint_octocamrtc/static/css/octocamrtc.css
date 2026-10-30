@@ -1,9 +1,11 @@
-.octocam-player-wrapper {
+.octocam-player-wrapper,
+.octocamrtc-player-wrapper {
     width: 100%;
     margin: 0 auto;
 }
 
-.octocam-video-viewport {
+.octocam-video-viewport,
+.octocamrtc-video-viewport {
     position: relative;
     width: 100%;
     background-color: #111111;
@@ -11,15 +13,18 @@
     overflow: hidden;
 }
 
-.octocam-video-viewport.ratio-16-9 {
+.octocam-video-viewport.ratio-16-9,
+.octocamrtc-video-viewport.ratio-16-9 {
     aspect-ratio: 16 / 9;
 }
 
-.octocam-video-viewport.ratio-4-3 {
+.octocam-video-viewport.ratio-4-3,
+.octocamrtc-video-viewport.ratio-4-3 {
     aspect-ratio: 4 / 3;
 }
 
-.octocam-rotation-container {
+.octocam-rotation-container,
+.octocamrtc-rotation-container {
     position: relative;
     width: 100%;
     height: 100%;
@@ -29,7 +34,8 @@
     background-color: #000000;
 }
 
-.octocam-poster-element {
+.octocam-poster-element,
+.octocamrtc-poster-element {
     position: absolute;
     top: 0;
     left: 0;
@@ -43,11 +49,13 @@
     pointer-events: none;
 }
 
-.octocam-poster-element.poster-hidden {
+.octocam-poster-element.poster-hidden,
+.octocamrtc-poster-element.poster-hidden {
     opacity: 0;
 }
 
-.octocam-poster-overlay {
+.octocam-poster-overlay,
+.octocamrtc-poster-overlay {
     position: absolute;
     top: 0;
     left: 0;
@@ -62,11 +70,13 @@
     background: rgba(0, 0, 0, 0.25);
 }
 
-.octocam-poster-overlay.poster-hidden {
+.octocam-poster-overlay.poster-hidden,
+.octocamrtc-poster-overlay.poster-hidden {
     opacity: 0;
 }
 
-.octocam-poster-badge {
+.octocam-poster-badge,
+.octocamrtc-poster-badge {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -81,12 +91,16 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
-.octocam-poster-badge .octocam-spinner {
+.octocam-poster-badge .octocam-spinner,
+.octocamrtc-poster-badge .octocam-spinner,
+.octocam-poster-badge .octocamrtc-spinner,
+.octocamrtc-poster-badge .octocamrtc-spinner {
     font-size: 13px;
     color: #38bdf8;
 }
 
-.octocam-video-element {
+.octocam-video-element,
+.octocamrtc-video-element {
     position: relative;
     width: 100%;
     height: 100%;
@@ -95,7 +109,8 @@
     z-index: 0;
 }
 
-.octocam-overlay-bar {
+.octocam-overlay-bar,
+.octocamrtc-overlay-bar {
     position: absolute;
     bottom: 8px;
     left: 10px;
@@ -111,12 +126,15 @@
 }
 
 .octocam-video-viewport:hover .octocam-overlay-bar,
-.octocam-video-viewport:focus-within .octocam-overlay-bar {
+.octocam-video-viewport:focus-within .octocam-overlay-bar,
+.octocamrtc-video-viewport:hover .octocamrtc-overlay-bar,
+.octocamrtc-video-viewport:focus-within .octocamrtc-overlay-bar {
     opacity: 1;
     visibility: visible;
 }
 
-.octocam-badge {
+.octocam-badge,
+.octocamrtc-badge {
     pointer-events: auto;
     padding: 3px 9px;
     border-radius: 3px;
@@ -127,28 +145,34 @@
     backdrop-filter: blur(2px);
 }
 
-.octocam-badge.badge-connected {
+.octocam-badge.badge-connected,
+.octocamrtc-badge.badge-connected {
     background-color: rgba(25, 135, 84, 0.85);
 }
 
-.octocam-badge.badge-connecting {
+.octocam-badge.badge-connecting,
+.octocamrtc-badge.badge-connecting {
     background-color: rgba(217, 130, 43, 0.85);
 }
 
-.octocam-badge.badge-error {
+.octocam-badge.badge-error,
+.octocamrtc-badge.badge-error {
     background-color: rgba(200, 45, 45, 0.85);
 }
 
-.octocam-controls {
+.octocam-controls,
+.octocamrtc-controls {
     pointer-events: auto;
     display: flex;
     gap: 6px;
 }
 
-.octocam-status-banner {
+.octocam-status-banner,
+.octocamrtc-status-banner {
     margin-top: 6px;
 }
 
-.octocam-ice-table input {
+.octocam-ice-table input,
+.octocamrtc-ice-table input {
     margin-bottom: 0;
 }

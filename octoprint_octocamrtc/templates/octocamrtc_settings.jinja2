@@ -1,25 +1,25 @@
 <form class="form-horizontal" onsubmit="return false;">
-    <h3>{{ _('OctoCam — WebRTC & STUN/TURN Configuration') }}</h3>
+    <h3>{{ _('OctoCamRTC — WebRTC & STUN/TURN Configuration') }}</h3>
 
     <!-- Section 1: go2rtc Server & Stream Selection -->
     <fieldset>
         <legend>{{ _('go2rtc Media Server Configuration') }}</legend>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_webcam_name">{{ _('Webcam Display Name') }}</label>
+            <label class="control-label" for="octocamrtc_webcam_name">{{ _('Webcam Display Name') }}</label>
             <div class="controls">
-                <input id="octocam_webcam_name" type="text" class="input-xlarge"
-                       data-bind="value: settingsViewModel.settings.plugins.octocam.webcam_name">
+                <input id="octocamrtc_webcam_name" type="text" class="input-xlarge"
+                       data-bind="value: settingsViewModel.settings.plugins.octocamrtc.webcam_name">
             </div>
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_go2rtc_url">{{ _('go2rtc Server URL') }}</label>
+            <label class="control-label" for="octocamrtc_go2rtc_url">{{ _('go2rtc Server URL') }}</label>
             <div class="controls">
                 <div class="input-append">
-                    <input id="octocam_go2rtc_url" type="text" class="input-xlarge"
+                    <input id="octocamrtc_go2rtc_url" type="text" class="input-xlarge"
                            placeholder="http://127.0.0.1:1984"
-                           data-bind="value: settingsViewModel.settings.plugins.octocam.go2rtc_url">
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.go2rtc_url">
                     <button class="btn" type="button" data-bind="click: testGo2rtcConnection, disable: isTestingGo2rtc()">
                         <i class="fa fa-plug"></i> {{ _('Test Connection') }}
                     </button>
@@ -27,20 +27,20 @@
                 <span class="help-block">
                     {{ _('Base URL of the go2rtc server (default: http://127.0.0.1:1984).') }}
                 </span>
-                <div class="octocam-status-banner" data-bind="visible: go2rtcTestMessage(), css: { 'text-success': go2rtcTestOk(), 'text-error': !go2rtcTestOk() }">
+                <div class="octocamrtc-status-banner octocam-status-banner" data-bind="visible: go2rtcTestMessage(), css: { 'text-success': go2rtcTestOk(), 'text-error': !go2rtcTestOk() }">
                     <small data-bind="text: go2rtcTestMessage"></small>
                 </div>
             </div>
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_go2rtc_stream">{{ _('Camera Stream') }}</label>
+            <label class="control-label" for="octocamrtc_go2rtc_stream">{{ _('Camera Stream') }}</label>
             <div class="controls">
                 <!-- Dropdown when streams are discovered from go2rtc -->
                 <div data-bind="visible: availableStreams().length > 0">
                     <div class="input-append">
-                        <select id="octocam_go2rtc_stream_select" class="input-large"
-                                data-bind="options: availableStreams, value: settingsViewModel.settings.plugins.octocam.go2rtc_stream">
+                        <select id="octocamrtc_go2rtc_stream_select" class="input-large"
+                                data-bind="options: availableStreams, value: settingsViewModel.settings.plugins.octocamrtc.go2rtc_stream">
                         </select>
                         <button class="btn" type="button" data-bind="click: loadAvailableStreams, disable: isLoadingStreams()" title="{{ _('Refresh streams from go2rtc') }}">
                             <i class="fa fa-refresh" data-bind="css: { 'fa-spin': isLoadingStreams }"></i>
@@ -54,26 +54,26 @@
                 <!-- Text fallback input when no streams are loaded yet -->
                 <div data-bind="visible: availableStreams().length === 0">
                     <div class="input-append">
-                        <input id="octocam_go2rtc_stream_text" type="text" class="input-large"
-                               placeholder="octocam"
-                               data-bind="value: settingsViewModel.settings.plugins.octocam.go2rtc_stream">
+                        <input id="octocamrtc_go2rtc_stream_text" type="text" class="input-large"
+                               placeholder="octocamrtc"
+                               data-bind="value: settingsViewModel.settings.plugins.octocamrtc.go2rtc_stream">
                         <button class="btn" type="button" data-bind="click: loadAvailableStreams, disable: isLoadingStreams()" title="{{ _('Query go2rtc streams') }}">
                             <i class="fa fa-refresh" data-bind="css: { 'fa-spin': isLoadingStreams }"></i> {{ _('Discover Streams') }}
                         </button>
                     </div>
                     <span class="help-block">
-                        {{ _('Stream name configured in go2rtc.yaml (e.g. "octocam" or "cam").') }}
+                        {{ _('Stream name configured in go2rtc.yaml (e.g. "octocamrtc" or "cam").') }}
                     </span>
                 </div>
             </div>
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_stream_url">{{ _('Optional Stream URL') }}</label>
+            <label class="control-label" for="octocamrtc_stream_url">{{ _('Optional Stream URL') }}</label>
             <div class="controls">
-                <input id="octocam_stream_url" type="text" class="input-xlarge"
+                <input id="octocamrtc_stream_url" type="text" class="input-xlarge"
                        placeholder="Leave blank to stream automatically"
-                       data-bind="value: settingsViewModel.settings.plugins.octocam.stream_url">
+                       data-bind="value: settingsViewModel.settings.plugins.octocamrtc.stream_url">
                 <span class="help-block">
                     {{ _('Leave blank to automatically stream MJPEG directly from go2rtc (/api/stream.mjpeg?src=...). Set a custom URL if Home Assistant or external clients require a specific hostname/IP or separate stream.') }}
                 </span>
@@ -81,11 +81,11 @@
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_snapshot_url">{{ _('Optional Snapshot URL') }}</label>
+            <label class="control-label" for="octocamrtc_snapshot_url">{{ _('Optional Snapshot URL') }}</label>
             <div class="controls">
-                <input id="octocam_snapshot_url" type="text" class="input-xlarge"
+                <input id="octocamrtc_snapshot_url" type="text" class="input-xlarge"
                        placeholder="Leave blank to capture automatically"
-                       data-bind="value: settingsViewModel.settings.plugins.octocam.snapshot_url">
+                       data-bind="value: settingsViewModel.settings.plugins.octocamrtc.snapshot_url">
                 <span class="help-block">
                     {{ _('Leave blank to automatically pull JPEG snapshots directly from go2rtc (/api/frame.jpeg).') }}
                 </span>
@@ -96,7 +96,7 @@
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocam.sync_octoprint_stream">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.sync_octoprint_stream">
                     {{ _('Sync OctoPrint Stream & Snapshot URLs') }}
                 </label>
                 <span class="help-block">
@@ -109,7 +109,7 @@
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocam.snapshot_caching_enabled">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.snapshot_caching_enabled">
                     <strong>{{ _('Enable Snapshot Background Caching (Instant Poster)') }}</strong>
                 </label>
                 <span class="help-block">
@@ -118,12 +118,12 @@
             </div>
         </div>
 
-        <div class="control-group" data-bind="visible: settingsViewModel.settings.plugins.octocam.snapshot_caching_enabled">
-            <label class="control-label" for="octocam_snapshot_cache_interval">{{ _('Cache Refresh Interval') }}</label>
+        <div class="control-group" data-bind="visible: settingsViewModel.settings.plugins.octocamrtc.snapshot_caching_enabled">
+            <label class="control-label" for="octocamrtc_snapshot_cache_interval">{{ _('Cache Refresh Interval') }}</label>
             <div class="controls">
                 <div class="input-append">
-                    <input id="octocam_snapshot_cache_interval" type="number" class="input-mini" min="1" max="60"
-                           data-bind="value: settingsViewModel.settings.plugins.octocam.snapshot_cache_interval">
+                    <input id="octocamrtc_snapshot_cache_interval" type="number" class="input-mini" min="1" max="60"
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.snapshot_cache_interval">
                     <span class="add-on">{{ _('sec') }}</span>
                 </div>
                 <span class="help-block">
@@ -133,10 +133,10 @@
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocam_aspect_ratio">{{ _('Aspect Ratio') }}</label>
+            <label class="control-label" for="octocamrtc_aspect_ratio">{{ _('Aspect Ratio') }}</label>
             <div class="controls">
-                <select id="octocam_aspect_ratio" class="input-medium"
-                        data-bind="value: settingsViewModel.settings.plugins.octocam.aspect_ratio">
+                <select id="octocamrtc_aspect_ratio" class="input-medium"
+                        data-bind="value: settingsViewModel.settings.plugins.octocamrtc.aspect_ratio">
                     <option value="16:9">16:9</option>
                     <option value="4:3">4:3</option>
                 </select>
@@ -151,7 +151,7 @@
         <div class="control-group">
             <div class="controls">
                 <label class="checkbox">
-                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.cloudflare_enabled">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.cloudflare_enabled">
                     <strong>{{ _('Enable Dynamic Cloudflare TURN Credentials') }}</strong>
                 </label>
                 <span class="help-block">
@@ -160,13 +160,13 @@
             </div>
         </div>
 
-        <div data-bind="visible: settingsViewModel.settings.plugins.octocam.cloudflare_enabled">
+        <div data-bind="visible: settingsViewModel.settings.plugins.octocamrtc.cloudflare_enabled">
             <div class="control-group">
-                <label class="control-label" for="octocam_cf_key_id">{{ _('Cloudflare TURN Key ID') }}</label>
+                <label class="control-label" for="octocamrtc_cf_key_id">{{ _('Cloudflare TURN Key ID') }}</label>
                 <div class="controls">
-                    <input id="octocam_cf_key_id" type="text" class="input-xlarge"
+                    <input id="octocamrtc_cf_key_id" type="text" class="input-xlarge"
                            placeholder="e.g. 5dc9a1..."
-                           data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_turn_key_id">
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_turn_key_id">
                     <span class="help-block">
                         {{ _('The Cloudflare Calls App TURN Key ID created in your Cloudflare dashboard.') }}
                     </span>
@@ -174,11 +174,11 @@
             </div>
 
             <div class="control-group">
-                <label class="control-label" for="octocam_cf_api_token">{{ _('Cloudflare API Token') }}</label>
+                <label class="control-label" for="octocamrtc_cf_api_token">{{ _('Cloudflare API Token') }}</label>
                 <div class="controls">
-                    <input id="octocam_cf_api_token" type="password" class="input-xlarge"
+                    <input id="octocamrtc_cf_api_token" type="password" class="input-xlarge"
                            placeholder="e.g. secret_token_xyz"
-                           data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_api_token">
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_api_token">
                     <span class="help-block">
                         {{ _('API token / secret with permission to generate TURN credentials.') }}
                     </span>
@@ -186,10 +186,10 @@
             </div>
 
             <div class="control-group">
-                <label class="control-label" for="octocam_cf_ttl">{{ _('Credential TTL (Seconds)') }}</label>
+                <label class="control-label" for="octocamrtc_cf_ttl">{{ _('Credential TTL (Seconds)') }}</label>
                 <div class="controls">
-                    <input id="octocam_cf_ttl" type="number" min="60" max="86400" class="input-small"
-                           data-bind="value: settingsViewModel.settings.plugins.octocam.cloudflare_ttl">
+                    <input id="octocamrtc_cf_ttl" type="number" min="60" max="86400" class="input-small"
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_ttl">
                     <span class="help-inline">{{ _('Default: 3600 (1 hour). Credentials are automatically cached and renewed.') }}</span>
                 </div>
             </div>
@@ -197,7 +197,7 @@
             <div class="control-group">
                 <div class="controls">
                     <label class="checkbox">
-                        <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocam.force_turn_relay">
+                        <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.force_turn_relay">
                         {{ _('Force TURN Relay (iceTransportPolicy: relay)') }}
                     </label>
                     <span class="help-block">
@@ -211,7 +211,7 @@
                     <button class="btn" type="button" data-bind="click: testCloudflareTurn, disable: isTestingCloudflare()">
                         <i class="fa fa-cloud"></i> {{ _('Test Cloudflare TURN Credentials') }}
                     </button>
-                    <div class="octocam-status-banner" data-bind="visible: cloudflareTestMessage(), css: { 'text-success': cloudflareTestOk(), 'text-error': !cloudflareTestOk() }">
+                    <div class="octocamrtc-status-banner octocam-status-banner" data-bind="visible: cloudflareTestMessage(), css: { 'text-success': cloudflareTestOk(), 'text-error': !cloudflareTestOk() }">
                         <small data-bind="text: cloudflareTestMessage"></small>
                     </div>
                 </div>

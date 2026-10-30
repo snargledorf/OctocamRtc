@@ -1,17 +1,17 @@
-<div id="octocam_webcam_container" class="octocam-player-wrapper">
-    <div class="octocam-video-viewport" data-bind="css: viewportCss()">
-        <div class="octocam-rotation-container">
+<div id="octocamrtc_webcam_container" class="octocamrtc-player-wrapper octocam-player-wrapper">
+    <div class="octocamrtc-video-viewport octocam-video-viewport" data-bind="css: viewportCss()">
+        <div class="octocamrtc-rotation-container octocam-rotation-container">
             <!-- Poster Snapshot Display (visible while connecting / loading feed) -->
-            <img id="octocam_poster_image"
-                 class="octocam-poster-element"
+            <img id="octocamrtc_poster_image"
+                 class="octocamrtc-poster-element octocam-poster-element"
                  data-bind="attr: { src: posterUrl }, css: { 'poster-hidden': !showPoster() }"
                  alt="{{ _('Webcam snapshot preview') }}" />
 
             <!-- Loading Spinner & Status Overlay (centered) -->
-            <div class="octocam-poster-overlay" data-bind="css: { 'poster-hidden': !showPoster() }">
-                <div class="octocam-poster-badge">
+            <div class="octocamrtc-poster-overlay octocam-poster-overlay" data-bind="css: { 'poster-hidden': !showPoster() }">
+                <div class="octocamrtc-poster-badge octocam-poster-badge">
                     <!-- ko if: connectionState() === 'connecting' -->
-                    <i class="fa fa-circle-o-notch fa-spin octocam-spinner"></i>
+                    <i class="fa fa-circle-o-notch fa-spin octocamrtc-spinner octocam-spinner"></i>
                     <!-- /ko -->
                     <!-- ko if: connectionState() === 'error' -->
                     <i class="fa fa-exclamation-triangle" style="color: #f87171;"></i>
@@ -23,19 +23,19 @@
                 </div>
             </div>
 
-            <video id="octocam_webrtc_video"
-                   class="octocam-video-element"
+            <video id="octocamrtc_webrtc_video"
+                   class="octocamrtc-video-element octocam-video-element"
                    autoplay
                    playsinline
                    muted></video>
         </div>
 
-        <div class="octocam-overlay-bar">
-            <span class="octocam-badge" data-bind="css: statusBadgeClass(), text: connectionBadgeText()">
+        <div class="octocamrtc-overlay-bar octocam-overlay-bar">
+            <span class="octocamrtc-badge octocam-badge" data-bind="css: statusBadgeClass(), text: connectionBadgeText()">
                 Connecting...
             </span>
 
-            <div class="octocam-controls">
+            <div class="octocamrtc-controls octocam-controls">
                 <select class="input-medium" style="margin: 0 4px; height: 22px; font-size: 11px; padding: 1px 4px; background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.2);"
                         data-bind="visible: availableStreams().length > 1, options: availableStreams, value: selectedStream"
                         title="{{ _('Switch go2rtc Camera Stream') }}">

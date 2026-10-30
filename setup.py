@@ -1,16 +1,16 @@
 # coding=utf-8
 from setuptools import find_packages, setup
 
-plugin_identifier = "octocam"
-plugin_package = "octoprint_octocam"
-plugin_name = "OctoPrint-Octocam"
+plugin_identifier = "octocamrtc"
+plugin_package = "octoprint_octocamrtc"
+plugin_name = "OctoPrint-OctocamRtc"
 plugin_version = "0.1.0"
 plugin_description = (
     "Low-latency WebRTC webcam streaming for OctoPrint powered by go2rtc, "
     "with dynamic Cloudflare Calls TURN credentials and multi-stream selection."
 )
-plugin_author = "Ryan"
-plugin_url = "https://github.com/Ryan/Octocam"
+plugin_author = "snargledorf"
+plugin_url = "https://github.com/snargledorf/OctocamRtc"
 plugin_license = "AGPLv3"
 
 plugin_requires = [

@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Builds OctoPrint-Octocam sdist (.zip) in dist/ using only the Python standard library."""
+"""Builds OctoPrint-OctocamRtc sdist (.zip) in dist/ using only the Python standard library."""
 from __future__ import annotations
 
 import os
@@ -14,13 +14,13 @@ FILES_TO_PACKAGE = [
     "MANIFEST.in",
     "pyproject.toml",
     "setup.py",
-    "octoprint_octocam/__init__.py",
-    "octoprint_octocam/turn_provider.py",
-    "octoprint_octocam/webrtc_engine.py",
-    "octoprint_octocam/static/css/octocam.css",
-    "octoprint_octocam/static/js/octocam.js",
-    "octoprint_octocam/templates/octocam_settings.jinja2",
-    "octoprint_octocam/templates/octocam_webcam.jinja2",
+    "octoprint_octocamrtc/__init__.py",
+    "octoprint_octocamrtc/turn_provider.py",
+    "octoprint_octocamrtc/webrtc_engine.py",
+    "octoprint_octocamrtc/static/css/octocamrtc.css",
+    "octoprint_octocamrtc/static/js/octocamrtc.js",
+    "octoprint_octocamrtc/templates/octocamrtc_settings.jinja2",
+    "octoprint_octocamrtc/templates/octocamrtc_webcam.jinja2",
     "tests/test_plugin.py",
     "tests/test_turn_provider.py",
     "tests/test_webrtc_engine.py",
@@ -37,15 +37,15 @@ def _read_version() -> str:
 
 def main() -> None:
     version = _read_version()
-    pkg_dir = f"OctoPrint-Octocam-{version}"
+    pkg_dir = f"OctoPrint-OctocamRtc-{version}"
     os.makedirs(DIST_DIR, exist_ok=True)
 
     pkg_info = (
         "Metadata-Version: 2.1\n"
-        "Name: OctoPrint-Octocam\n"
+        "Name: OctoPrint-OctocamRtc\n"
         f"Version: {version}\n"
         "Summary: WebRTC Webcam Provider for OctoPrint with STUN/TURN (Cloudflare TURN) & Linux VAAPI hardware acceleration\n"
-        "Author: Ryan\n"
+        "Author: snargledorf\n"
         "License: AGPLv3\n"
         "Requires-Python: >=3.9,<4\n"
         "Description-Content-Type: text/markdown\n"

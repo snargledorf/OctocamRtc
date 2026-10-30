@@ -5,7 +5,7 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import patch
 
-from octoprint_octocam.turn_provider import (
+from octoprint_octocamrtc.turn_provider import (
     DEFAULT_STUN_SERVER,
     TurnCredentialError,
     TurnCredentialProvider,
@@ -37,7 +37,7 @@ class TestTurnProvider(unittest.TestCase):
             }
         }
 
-        with patch("octoprint_octocam.turn_provider.requests.post") as mock_post:
+        with patch("octoprint_octocamrtc.turn_provider.requests.post") as mock_post:
             mock_post.return_value = _DummyResponse(201, mock_cf_payload)
 
             servers_first = provider.get_ice_servers(
@@ -76,7 +76,7 @@ class TestTurnProvider(unittest.TestCase):
     def test_fallback_to_static_when_cloudflare_fails(self) -> None:
         provider = TurnCredentialProvider()
 
-        with patch("octoprint_octocam.turn_provider.requests.post") as mock_post:
+        with patch("octoprint_octocamrtc.turn_provider.requests.post") as mock_post:
             mock_post.return_value = _DummyResponse(401, {}, text="Unauthorized")
 
             servers = provider.get_ice_servers(

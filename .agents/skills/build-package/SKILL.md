@@ -1,12 +1,12 @@
 ---
 name: build-package
 description: >-
-  Builds the OctoPrint-Octocam .zip distribution archive in dist/ and runs the unit
+  Builds the OctoPrint-OctocamRtc .zip distribution archive in dist/ and runs the unit
   test suite. Use this skill whenever the user asks to create a build, package the
   plugin, or prepare a release.
 ---
 
-# Build OctoPrint-Octocam Package
+# Build OctoPrint-OctocamRtc Package
 
 The local Python environment may not have `setuptools` or `build` installed (`python setup.py sdist` will fail with `ModuleNotFoundError: No module named 'setuptools'`). Always use the bundled standard-library build script to generate the `.zip` distribution archive.
 
@@ -24,4 +24,4 @@ The local Python environment may not have `setuptools` or `build` installed (`py
    ```
 
 3. **Verify the output**:
-   Confirm that `dist/OctoPrint-Octocam-<version>.zip` is printed with a non-zero byte size.
+   Confirm that `dist/OctoPrint-OctocamRtc-<version>.zip` is printed with a non-zero byte size.

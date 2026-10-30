@@ -5,7 +5,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
-from octoprint_octocam import OctocamPlugin
+from octoprint_octocamrtc import OctocamPlugin, OctocamRtcPlugin
 
 
 class _FakeSettings:
@@ -49,12 +49,12 @@ class _FakeSettings:
 
 class TestOctocamPlugin(unittest.TestCase):
     def test_plugin_defaults_and_restricted_paths(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         self.assertTrue(plugin.is_api_protected())
         defaults = plugin.get_settings_defaults()
 
         self.assertEqual(defaults["go2rtc_url"], "http://127.0.0.1:1984")
-        self.assertEqual(defaults["go2rtc_stream"], "octocam")
+        self.assertEqual(defaults["go2rtc_stream"], "octocamrtc")
         self.assertEqual(defaults["stream_url"], "")
         self.assertTrue(defaults["sync_octoprint_stream"])
         self.assertTrue(defaults["snapshot_caching_enabled"])
@@ -65,8 +65,11 @@ class TestOctocamPlugin(unittest.TestCase):
         restricted = plugin.get_settings_restricted_paths()
         self.assertIn(["cloudflare_api_token"], restricted["admin"])
 
+    def test_backward_compatibility_alias(self) -> None:
+        self.assertIs(OctocamPlugin, OctocamRtcPlugin)
+
     def test_plugin_api_get_available_streams(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_available_streams = MagicMock(
             return_value=["bed_cam", "nozzle_cam"]
@@ -81,13 +84,13 @@ class TestOctocamPlugin(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(payload["streams"], ["bed_cam", "nozzle_cam"])
-        self.assertEqual(payload["selected"], "octocam")
+        self.assertEqual(payload["selected"], "octocamrtc")
 
     def test_plugin_api_test_go2rtc(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_available_streams = MagicMock(
-            return_value=["octocam", "cam2"]
+            return_value=["octocamrtc", "cam2"]
         )
 
         with patch.object(
@@ -100,11 +103,11 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["stream_found"])
-        self.assertIn("octocam", payload["streams"])
-        self.assertEqual(payload["mjpeg_url"], "http://127.0.0.1:1984/api/stream.mjpeg?src=octocam")
+        self.assertIn("octocamrtc", payload["streams"])
+        self.assertEqual(payload["mjpeg_url"], "http://127.0.0.1:1984/api/stream.mjpeg?src=octocamrtc")
 
     def test_plugin_api_get_ice_servers(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
 
         with patch.object(
@@ -119,7 +122,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertFalse(payload["forceTurnRelay"])
 
     def test_plugin_api_offer_routes_to_engine_with_stream(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.handle_offer = MagicMock(
             return_value={"sdp": "v=0...answer", "type": "answer"}
@@ -141,7 +144,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(call_kwargs["stream_override"], "bed_cam")
 
     def test_build_engine_config(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
         settings_data["go2rtc_url"] = "http://192.168.1.50:1984"
         settings_data["go2rtc_stream"] = "custom_cam"
@@ -152,7 +155,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(cfg.go2rtc_stream, "custom_cam")
 
     def test_get_webcam_configurations_registers_all_go2rtc_streams(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
         settings_data["go2rtc_stream"] = "bed_cam"
         plugin._settings = _FakeSettings(settings_data)
@@ -166,22 +169,22 @@ class TestOctocamPlugin(unittest.TestCase):
         names = [
             c["name"] if isinstance(c, dict) else c.name for c in configs
         ]
-        self.assertIn("octocam", names)  # Primary active stream
-        self.assertIn("octocam_nozzle_cam", names)
+        self.assertIn("octocamrtc", names)  # Primary active stream
+        self.assertIn("octocamrtc_nozzle_cam", names)
 
         # Check MJPEG stream URLs on dict configs
         by_name = {c["name"]: c for c in configs}
         self.assertEqual(
-            by_name["octocam"]["compat"]["stream"],
+            by_name["octocamrtc"]["compat"]["stream"],
             "http://127.0.0.1:1984/api/stream.mjpeg?src=bed_cam",
         )
         self.assertEqual(
-            by_name["octocam_nozzle_cam"]["compat"]["stream"],
+            by_name["octocamrtc_nozzle_cam"]["compat"]["stream"],
             "http://127.0.0.1:1984/api/stream.mjpeg?src=nozzle_cam",
         )
 
     def test_sync_webcam_stream_url_updates_global_settings(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
         settings_data["go2rtc_url"] = "http://192.168.1.50:1984"
         settings_data["go2rtc_stream"] = "main_cam"
@@ -204,7 +207,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertTrue(plugin._settings.saved)
 
     def test_sync_webcam_stream_url_custom_override(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
         settings_data["stream_url"] = "http://10.0.0.5:1984/api/stream.mjpeg?src=octocam_mjpeg"
         plugin._settings = _FakeSettings(settings_data)
@@ -221,11 +224,11 @@ class TestOctocamPlugin(unittest.TestCase):
         )
 
     def test_take_webcam_snapshot_handles_stream_specific_webcams(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.capture_snapshot = MagicMock(return_value=b"jpeg_bytes")
 
-        fake_webcam = {"name": "octocam_nozzle_cam"}
+        fake_webcam = {"name": "octocamrtc_nozzle_cam"}
         result = list(plugin.take_webcam_snapshot(fake_webcam))
         self.assertEqual(result, [b"jpeg_bytes"])
         plugin._webrtc_engine.capture_snapshot.assert_called_once()
@@ -233,17 +236,17 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(call_kwargs["stream_override"], "nozzle_cam")
 
     def test_take_webcam_snapshot_uses_cached_if_fresh(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_cached_snapshot = MagicMock(return_value=b"cached_snap")
         plugin._webrtc_engine.capture_snapshot = MagicMock()
 
-        result = list(plugin.take_webcam_snapshot({"name": "octocam"}))
+        result = list(plugin.take_webcam_snapshot({"name": "octocamrtc"}))
         self.assertEqual(result, [b"cached_snap"])
         plugin._webrtc_engine.capture_snapshot.assert_not_called()
 
     def test_snapshot_endpoint_serves_cached(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_cached_snapshot = MagicMock(return_value=b"cached_jpeg")
 
@@ -252,7 +255,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(resp, b"cached_jpeg")
 
     def test_snapshot_endpoint_falls_back_to_live_capture(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_cached_snapshot = MagicMock(return_value=None)
         plugin._webrtc_engine.capture_snapshot = MagicMock(return_value=b"live_jpeg")
@@ -262,7 +265,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(resp, b"live_jpeg")
 
     def test_snapshot_endpoint_failure_returns_503(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
         plugin._webrtc_engine.get_cached_snapshot = MagicMock(return_value=None)
         plugin._webrtc_engine.capture_snapshot = MagicMock(
@@ -273,7 +276,7 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(status, 503)
 
     def test_snapshot_worker_lifecycle(self) -> None:
-        plugin = OctocamPlugin()
+        plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
 
         plugin._start_snapshot_worker()

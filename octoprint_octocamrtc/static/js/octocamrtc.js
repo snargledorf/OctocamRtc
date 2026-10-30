@@ -1,6 +1,6 @@
 /* global OCTOPRINT_VIEWMODELS, OctoPrint, ko, $ */
 $(function () {
-    function OctocamViewModel(parameters) {
+    function OctocamRtcViewModel(parameters) {
         var self = this;
 
         self.settingsViewModel = parameters[0];
@@ -16,7 +16,7 @@ $(function () {
 
         // Multi-stream observables
         self.availableStreams = ko.observableArray([]);
-        self.selectedStream = ko.observable("octocam");
+        self.selectedStream = ko.observable("octocamrtc");
         self.isLoadingStreams = ko.observable(false);
 
         // Settings diagnostic observables
@@ -95,12 +95,23 @@ $(function () {
             if (
                 self.settingsViewModel &&
                 self.settingsViewModel.settings &&
-                self.settingsViewModel.settings.plugins &&
-                self.settingsViewModel.settings.plugins.octocam
+                self.settingsViewModel.settings.plugins
             ) {
-                return self.settingsViewModel.settings.plugins.octocam;
+                if (self.settingsViewModel.settings.plugins.octocamrtc) {
+                    return self.settingsViewModel.settings.plugins.octocamrtc;
+                }
+                if (self.settingsViewModel.settings.plugins.octocam) {
+                    return self.settingsViewModel.settings.plugins.octocam;
+                }
             }
             return null;
+        };
+
+        self._getVideoElement = function () {
+            return (
+                document.getElementById("octocamrtc_webrtc_video") ||
+                document.getElementById("octocam_webrtc_video")
+            );
         };
 
         // Poster & Snapshot Helpers
@@ -108,9 +119,9 @@ $(function () {
             var p = self._pluginSettings();
             var stream =
                 self.selectedStream() ||
-                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam");
+                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocamrtc");
             self.posterUrl(
-                "/plugin/octocam/snapshot?src=" +
+                "/plugin/octocamrtc/snapshot?src=" +
                     encodeURIComponent(stream) +
                     "&t=" +
                     Date.now()
@@ -157,7 +168,7 @@ $(function () {
             var url = p && p.go2rtc_url ? p.go2rtc_url() : "http://127.0.0.1:1984";
             self.isLoadingStreams(true);
 
-            OctoPrint.simpleApiCommand("octocam", "get_available_streams", {
+            OctoPrint.simpleApiCommand("octocamrtc", "get_available_streams", {
                 go2rtc_url: url
             })
                 .done(function (response) {
@@ -245,7 +256,7 @@ $(function () {
             self.cloudflareTestMessage("Requesting short-lived credentials from Cloudflare Calls TURN API...");
             self.cloudflareTestOk(true);
 
-            OctoPrint.simpleApiCommand("octocam", "test_cloudflare", {
+            OctoPrint.simpleApiCommand("octocamrtc", "test_cloudflare", {
                 turn_key_id: p.cloudflare_turn_key_id(),
                 api_token: p.cloudflare_api_token(),
                 ttl: Number(p.cloudflare_ttl() || 3600)
@@ -273,13 +284,13 @@ $(function () {
         self.testGo2rtcConnection = function () {
             var p = self._pluginSettings();
             var url = p && p.go2rtc_url ? p.go2rtc_url() : "http://127.0.0.1:1984";
-            var stream = p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam";
+            var stream = p && p.go2rtc_stream ? p.go2rtc_stream() : "octocamrtc";
 
             self.isTestingGo2rtc(true);
             self.go2rtcTestMessage("Connecting to go2rtc at " + url + "...");
             self.go2rtcTestOk(true);
 
-            OctoPrint.simpleApiCommand("octocam", "test_go2rtc", {
+            OctoPrint.simpleApiCommand("octocamrtc", "test_go2rtc", {
                 go2rtc_url: url,
                 go2rtc_stream: stream
             })
@@ -311,7 +322,7 @@ $(function () {
         };
 
         self.toggleFullscreen = function () {
-            var videoEl = document.getElementById("octocam_webrtc_video");
+            var videoEl = self._getVideoElement();
             if (!videoEl) {
                 return;
             }
@@ -323,7 +334,7 @@ $(function () {
         };
 
         self.startStream = function () {
-            var videoEl = document.getElementById("octocam_webrtc_video");
+            var videoEl = self._getVideoElement();
             if (!videoEl) {
                 return;
             }
@@ -342,9 +353,9 @@ $(function () {
             var p = self._pluginSettings();
             var activeStream =
                 self.selectedStream() ||
-                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam");
+                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocamrtc");
 
-            OctoPrint.simpleApiCommand("octocam", "get_ice_servers")
+            OctoPrint.simpleApiCommand("octocamrtc", "get_ice_servers")
                 .done(function (iceConfig) {
                     var iceServers = (iceConfig && iceConfig.iceServers) || [
                         { urls: ["stun:stun.cloudflare.com:3478"] }
@@ -412,7 +423,7 @@ $(function () {
                 })
                 .then(function () {
                     var localDesc = pc.localDescription;
-                    return OctoPrint.simpleApiCommand("octocam", "offer", {
+                    return OctoPrint.simpleApiCommand("octocamrtc", "offer", {
                         sdp: localDesc.sdp,
                         type: localDesc.type,
                         stream: streamName
@@ -542,7 +553,7 @@ $(function () {
                 }
                 self._pc = null;
             }
-            var videoEl = document.getElementById("octocam_webrtc_video");
+            var videoEl = self._getVideoElement();
             if (videoEl && videoEl.srcObject) {
                 videoEl.srcObject = null;
             }
@@ -628,9 +639,16 @@ $(function () {
         };
     }
 
+    var OctocamViewModel = OctocamRtcViewModel;
+
     OCTOPRINT_VIEWMODELS.push({
-        construct: OctocamViewModel,
+        construct: OctocamRtcViewModel,
         dependencies: ["settingsViewModel"],
-        elements: ["#settings_plugin_octocam", "#webcam_plugin_octocam"]
+        elements: [
+            "#settings_plugin_octocamrtc",
+            "#webcam_plugin_octocamrtc",
+            "#settings_plugin_octocam",
+            "#webcam_plugin_octocam"
+        ]
     });
 });

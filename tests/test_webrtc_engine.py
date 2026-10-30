@@ -5,7 +5,7 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
-from octoprint_octocam.webrtc_engine import (
+from octoprint_octocamrtc.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
     resolve_go2rtc_mjpeg_url,
@@ -59,14 +59,14 @@ class TestWebRTCEngine(unittest.TestCase):
         mock_resp.text = '{"stream2": {}, "stream1": {}}'
         mock_resp.json.return_value = {"stream2": {}, "stream1": {}}
 
-        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp):
+        with patch("octoprint_octocamrtc.webrtc_engine.requests.get", return_value=mock_resp):
             streams = engine.get_available_streams("http://127.0.0.1:1984")
 
         self.assertEqual(streams, ["stream1", "stream2"])
 
     def test_get_available_streams_failure_returns_empty_list(self) -> None:
         engine = WebRTCEngine()
-        with patch("octoprint_octocam.webrtc_engine.requests.get", side_effect=RuntimeError("connection refused")):
+        with patch("octoprint_octocamrtc.webrtc_engine.requests.get", side_effect=RuntimeError("connection refused")):
             streams = engine.get_available_streams("http://127.0.0.1:1984")
         self.assertEqual(streams, [])
 
@@ -74,7 +74,7 @@ class TestWebRTCEngine(unittest.TestCase):
         engine = WebRTCEngine()
         config = EngineConfig(
             go2rtc_url="http://127.0.0.1:1984",
-            go2rtc_stream="octocam",
+            go2rtc_stream="octocamrtc",
         )
 
         mock_resp = MagicMock()
@@ -83,7 +83,7 @@ class TestWebRTCEngine(unittest.TestCase):
         mock_resp.headers = {"Content-Type": "application/sdp"}
 
         with patch(
-            "octoprint_octocam.webrtc_engine.requests.post", return_value=mock_resp
+            "octoprint_octocamrtc.webrtc_engine.requests.post", return_value=mock_resp
         ) as mock_post:
             answer = engine.handle_offer(
                 sdp="v=0\r\no=client 0 0 IN IP4 127.0.0.1\r\n",
@@ -94,7 +94,7 @@ class TestWebRTCEngine(unittest.TestCase):
         self.assertEqual(answer["type"], "answer")
         self.assertIn("v=0", answer["sdp"])
         mock_post.assert_called_once_with(
-            "http://127.0.0.1:1984/api/webrtc?src=octocam",
+            "http://127.0.0.1:1984/api/webrtc?src=octocamrtc",
             data=b"v=0\r\no=client 0 0 IN IP4 127.0.0.1\r\n",
             headers={"Content-Type": "application/sdp", "Accept": "application/sdp, application/json"},
             timeout=10.0,
@@ -114,7 +114,7 @@ class TestWebRTCEngine(unittest.TestCase):
         mock_resp.json.return_value = {"type": "answer", "sdp": "v=0...json_answer"}
 
         with patch(
-            "octoprint_octocam.webrtc_engine.requests.post", return_value=mock_resp
+            "octoprint_octocamrtc.webrtc_engine.requests.post", return_value=mock_resp
         ) as mock_post:
             answer = engine.handle_offer(
                 sdp="v=0...offer",
@@ -144,7 +144,7 @@ class TestWebRTCEngine(unittest.TestCase):
         mock_resp.status_code = 200
         mock_resp.content = fake_jpeg
 
-        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp) as mock_get:
+        with patch("octoprint_octocamrtc.webrtc_engine.requests.get", return_value=mock_resp) as mock_get:
             result = engine.capture_snapshot(config)
 
         self.assertEqual(result, fake_jpeg)
@@ -161,7 +161,7 @@ class TestWebRTCEngine(unittest.TestCase):
         config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam")
         mock_resp = MagicMock(status_code=200, content=b"jpeg1")
 
-        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp):
+        with patch("octoprint_octocamrtc.webrtc_engine.requests.get", return_value=mock_resp):
             engine.capture_snapshot(config)
 
         # Fresh within 10s
@@ -178,7 +178,7 @@ class TestWebRTCEngine(unittest.TestCase):
         config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam")
 
         with patch(
-            "octoprint_octocam.webrtc_engine.requests.get",
+            "octoprint_octocamrtc.webrtc_engine.requests.get",
             side_effect=RuntimeError("connection failed"),
         ):
             result = engine.update_snapshot_cache(config)
@@ -191,7 +191,7 @@ class TestWebRTCEngine(unittest.TestCase):
         config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam1")
         mock_resp = MagicMock(status_code=200, content=b"data")
 
-        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp):
+        with patch("octoprint_octocamrtc.webrtc_engine.requests.get", return_value=mock_resp):
             engine.capture_snapshot(config, stream_override="cam1")
             engine.capture_snapshot(config, stream_override="cam2")
 
