@@ -17,6 +17,7 @@ class EngineConfig:
 
     go2rtc_url: str = "http://127.0.0.1:1984"
     go2rtc_stream: str = "octocam"
+    stream_url: str = ""
     snapshot_url: str = ""
     ice_servers: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -34,6 +35,24 @@ def resolve_go2rtc_webrtc_url(go2rtc_url: str, stream_name: str = "octocam") -> 
         return raw
     stream = (stream_name or "octocam").strip()
     return f"{raw}/api/webrtc?src={stream}"
+
+
+def resolve_go2rtc_mjpeg_url(go2rtc_url: str, stream_name: str = "octocam") -> str:
+    """
+    Resolves the go2rtc live MJPEG stream URL for `stream_name`.
+    Extracts base URL and stream name if a full WHEP or stream endpoint was supplied.
+    """
+    raw = (go2rtc_url or "").strip().rstrip("/")
+    if not raw:
+        raw = "http://127.0.0.1:1984"
+    if "/api/" in raw:
+        base = raw.split("/api/")[0]
+        parsed = urllib.parse.urlparse(raw)
+        params = urllib.parse.parse_qs(parsed.query)
+        stream = params.get("src", [stream_name or "octocam"])[0]
+        return f"{base}/api/stream.mjpeg?src={stream}"
+    stream = (stream_name or "octocam").strip()
+    return f"{raw}/api/stream.mjpeg?src={stream}"
 
 
 def resolve_go2rtc_snapshot_url(go2rtc_url: str, stream_name: str = "octocam") -> str:

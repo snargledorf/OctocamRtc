@@ -47,6 +47,7 @@ from octoprint_octocam.turn_provider import TurnCredentialError, TurnCredentialP
 from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
+    resolve_go2rtc_mjpeg_url,
     resolve_go2rtc_snapshot_url,
     resolve_go2rtc_webrtc_url,
 )
@@ -106,6 +107,8 @@ class OctocamPlugin(
         except Exception as exc:
             self._logger.debug("Could not check/update defaultWebcam on startup: %s", exc)
 
+        self._sync_webcam_stream_url()
+
     # ~~ SettingsPlugin mixin ~~
 
     def get_settings_defaults(self) -> Dict[str, Any]:
@@ -113,7 +116,9 @@ class OctocamPlugin(
             "webcam_name": "OctoCam WebRTC",
             "go2rtc_url": "http://127.0.0.1:1984",
             "go2rtc_stream": "octocam",
+            "stream_url": "",
             "snapshot_url": "",
+            "sync_octoprint_stream": True,
             "aspect_ratio": "16:9",  # "16:9" or "4:3"
             "cloudflare_enabled": True,
             "cloudflare_turn_key_id": "",
@@ -140,6 +145,7 @@ class OctocamPlugin(
         if hasattr(_BaseSettingsPlugin, "on_settings_save"):
             super().on_settings_save(data)  # type: ignore[misc]
         self._turn_provider.invalidate_cache()
+        self._sync_webcam_stream_url()
 
     # ~~ AssetPlugin mixin ~~
 
@@ -173,6 +179,7 @@ class OctocamPlugin(
         aspect_ratio_str = str(self._settings.get(["aspect_ratio"]) or "16:9")
         go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
         active_stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
         custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
 
         # Query all configured streams from go2rtc so all streams are selectable in OctoPrint
@@ -205,6 +212,11 @@ class OctocamPlugin(
                     if len(streams_to_register) == 1
                     else f"{base_display_name} ({stream})"
                 )
+                stream_display = (
+                    custom_stream_url
+                    if (custom_stream_url and is_primary)
+                    else resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
+                )
                 snap_display = (
                     custom_snapshot_url
                     if (custom_snapshot_url and is_primary)
@@ -221,7 +233,7 @@ class OctocamPlugin(
                         snapshotDisplay=snap_display,
                         canSnapshot=True,
                         compat=WebcamCompatibility(
-                            stream="webrtc",
+                            stream=stream_display,
                             streamTimeout=15,
                             streamRatio=ratio,
                             snapshot=snap_display,
@@ -246,6 +258,11 @@ class OctocamPlugin(
                     if len(streams_to_register) == 1
                     else f"{base_display_name} ({stream})"
                 )
+                stream_display = (
+                    custom_stream_url
+                    if (custom_stream_url and is_primary)
+                    else resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
+                )
                 snap_display = (
                     custom_snapshot_url
                     if (custom_snapshot_url and is_primary)
@@ -258,9 +275,16 @@ class OctocamPlugin(
                         "flipH": False,
                         "flipV": False,
                         "rotate90": False,
+                        "stream": stream_display,
+                        "streamDisplay": stream_display,
                         "snapshotDisplay": snap_display,
                         "canSnapshot": True,
                         "go2rtcStream": stream,
+                        "compat": {
+                            "stream": stream_display,
+                            "snapshot": snap_display,
+                            "streamRatio": aspect_ratio_str,
+                        },
                     }
                 )
             return dict_configs
@@ -392,6 +416,8 @@ class OctocamPlugin(
                 or self._settings.get(["go2rtc_stream"])
                 or "octocam"
             ).strip()
+            custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
+            mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(go2rtc_url, stream_name)
 
             available_streams = self._webrtc_engine.get_available_streams(go2rtc_url)
             stream_found = stream_name in available_streams
@@ -413,6 +439,7 @@ class OctocamPlugin(
                     "stream_found": stream_found,
                     "message": msg,
                     "streams": available_streams,
+                    "mjpeg_url": mjpeg_url,
                 }
             )
 
@@ -447,9 +474,59 @@ class OctocamPlugin(
         return EngineConfig(
             go2rtc_url=self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984",
             go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocam",
+            stream_url=self._settings.get(["stream_url"]) or "",
             snapshot_url=self._settings.get(["snapshot_url"]) or "",
             ice_servers=ice_servers,
         )
+
+    def _sync_webcam_stream_url(self) -> None:
+        """
+        Synchronizes OctoPrint's classic/legacy webcam stream and snapshot URLs
+        with go2rtc's MJPEG stream and JPEG snapshot endpoints.
+        Allows integrations like Home Assistant to stream the camera.
+        """
+        if (
+            not hasattr(self, "_settings")
+            or not hasattr(self._settings, "global_get")
+            or not hasattr(self._settings, "global_set")
+        ):
+            return
+        if not bool(self._settings.get_boolean(["sync_octoprint_stream"])):
+            return
+
+        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
+        stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
+        custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
+
+        mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
+        snap_url = custom_snapshot_url or resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+
+        try:
+            changed = False
+            if self._settings.global_get(["webcam", "streamUrl"]) != mjpeg_url:
+                self._settings.global_set(["webcam", "streamUrl"], mjpeg_url)
+                changed = True
+            if self._settings.global_get(["plugins", "classicwebcam", "stream"]) != mjpeg_url:
+                self._settings.global_set(["plugins", "classicwebcam", "stream"], mjpeg_url)
+                changed = True
+            if snap_url:
+                if self._settings.global_get(["webcam", "snapshotUrl"]) != snap_url:
+                    self._settings.global_set(["webcam", "snapshotUrl"], snap_url)
+                    changed = True
+                if self._settings.global_get(["plugins", "classicwebcam", "snapshot"]) != snap_url:
+                    self._settings.global_set(["plugins", "classicwebcam", "snapshot"], snap_url)
+                    changed = True
+
+            if changed and hasattr(self._settings, "save"):
+                self._settings.save()
+                self._logger.info(
+                    "[OctoCam] Synchronized OctoPrint webcam stream URL: '%s' and snapshot URL: '%s'",
+                    mjpeg_url,
+                    snap_url,
+                )
+        except Exception as exc:
+            self._logger.warning("[OctoCam] Failed to sync OctoPrint webcam stream URL: %s", exc)
 
     @staticmethod
     def _json_response(payload: Dict[str, Any], status: int = 200) -> Any:

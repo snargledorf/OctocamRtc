@@ -69,6 +69,18 @@
         </div>
 
         <div class="control-group">
+            <label class="control-label" for="octocam_stream_url">{{ _('Optional Stream URL') }}</label>
+            <div class="controls">
+                <input id="octocam_stream_url" type="text" class="input-xlarge"
+                       placeholder="Leave blank to stream automatically"
+                       data-bind="value: settingsViewModel.settings.plugins.octocam.stream_url">
+                <span class="help-block">
+                    {{ _('Leave blank to automatically stream MJPEG directly from go2rtc (/api/stream.mjpeg?src=...). Set a custom URL if Home Assistant or external clients require a specific hostname/IP or separate stream.') }}
+                </span>
+            </div>
+        </div>
+
+        <div class="control-group">
             <label class="control-label" for="octocam_snapshot_url">{{ _('Optional Snapshot URL') }}</label>
             <div class="controls">
                 <input id="octocam_snapshot_url" type="text" class="input-xlarge"
@@ -76,6 +88,19 @@
                        data-bind="value: settingsViewModel.settings.plugins.octocam.snapshot_url">
                 <span class="help-block">
                     {{ _('Leave blank to automatically pull JPEG snapshots directly from go2rtc (/api/frame.jpeg).') }}
+                </span>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocam.sync_octoprint_stream">
+                    {{ _('Sync OctoPrint Stream & Snapshot URLs') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Automatically keep OctoPrint\'s global webcam stream and snapshot URLs synchronized with this MJPEG stream so that Home Assistant and other external clients can stream the camera.') }}
                 </span>
             </div>
         </div>

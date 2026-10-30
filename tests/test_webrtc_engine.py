@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from octoprint_octocam.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
+    resolve_go2rtc_mjpeg_url,
     resolve_go2rtc_snapshot_url,
     resolve_go2rtc_streams_url,
     resolve_go2rtc_webrtc_url,
@@ -34,6 +35,15 @@ class TestWebRTCEngine(unittest.TestCase):
             "http://127.0.0.1:1984/api/webrtc?src=custom"
         )
         self.assertEqual(snap2, "http://127.0.0.1:1984/api/frame.jpeg?src=custom")
+
+        # MJPEG URL resolvers
+        mjpeg1 = resolve_go2rtc_mjpeg_url("http://127.0.0.1:1984", "mycam")
+        self.assertEqual(mjpeg1, "http://127.0.0.1:1984/api/stream.mjpeg?src=mycam")
+
+        mjpeg2 = resolve_go2rtc_mjpeg_url(
+            "http://127.0.0.1:1984/api/webrtc?src=custom"
+        )
+        self.assertEqual(mjpeg2, "http://127.0.0.1:1984/api/stream.mjpeg?src=custom")
 
         # Streams API URL resolver
         streams_url = resolve_go2rtc_streams_url("http://127.0.0.1:1984")
