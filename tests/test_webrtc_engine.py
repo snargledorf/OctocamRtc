@@ -152,6 +152,58 @@ class TestWebRTCEngine(unittest.TestCase):
             "http://127.0.0.1:1984/api/frame.jpeg?src=nozzle_cam",
             timeout=5.0,
         )
+        # Snapshot should now be cached
+        cached = engine.get_cached_snapshot("nozzle_cam")
+        self.assertEqual(cached, fake_jpeg)
+
+    def test_get_cached_snapshot_with_max_age(self) -> None:
+        engine = WebRTCEngine()
+        config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam")
+        mock_resp = MagicMock(status_code=200, content=b"jpeg1")
+
+        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp):
+            engine.capture_snapshot(config)
+
+        # Fresh within 10s
+        self.assertEqual(engine.get_cached_snapshot("cam", max_age=10.0), b"jpeg1")
+
+        # Expired with 0s max_age
+        self.assertIsNone(engine.get_cached_snapshot("cam", max_age=-1.0))
+
+        # Missing stream
+        self.assertIsNone(engine.get_cached_snapshot("nonexistent"))
+
+    def test_update_snapshot_cache_handles_errors_gracefully(self) -> None:
+        engine = WebRTCEngine()
+        config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam")
+
+        with patch(
+            "octoprint_octocam.webrtc_engine.requests.get",
+            side_effect=RuntimeError("connection failed"),
+        ):
+            result = engine.update_snapshot_cache(config)
+
+        self.assertIsNone(result)
+        self.assertIsNone(engine.get_cached_snapshot("cam"))
+
+    def test_clear_snapshot_cache(self) -> None:
+        engine = WebRTCEngine()
+        config = EngineConfig(go2rtc_url="http://127.0.0.1:1984", go2rtc_stream="cam1")
+        mock_resp = MagicMock(status_code=200, content=b"data")
+
+        with patch("octoprint_octocam.webrtc_engine.requests.get", return_value=mock_resp):
+            engine.capture_snapshot(config, stream_override="cam1")
+            engine.capture_snapshot(config, stream_override="cam2")
+
+        self.assertIsNotNone(engine.get_cached_snapshot("cam1"))
+        self.assertIsNotNone(engine.get_cached_snapshot("cam2"))
+
+        engine.clear_snapshot_cache("cam1")
+        self.assertIsNone(engine.get_cached_snapshot("cam1"))
+        self.assertIsNotNone(engine.get_cached_snapshot("cam2"))
+
+        engine.clear_snapshot_cache()
+        self.assertIsNone(engine.get_cached_snapshot("cam2"))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,28 @@
 <div id="octocam_webcam_container" class="octocam-player-wrapper">
     <div class="octocam-video-viewport" data-bind="css: viewportCss()">
         <div class="octocam-rotation-container">
+            <!-- Poster Snapshot Display (visible while connecting / loading feed) -->
+            <img id="octocam_poster_image"
+                 class="octocam-poster-element"
+                 data-bind="attr: { src: posterUrl }, css: { 'poster-hidden': !showPoster() }"
+                 alt="{{ _('Webcam snapshot preview') }}" />
+
+            <!-- Loading Spinner & Status Overlay (centered) -->
+            <div class="octocam-poster-overlay" data-bind="css: { 'poster-hidden': !showPoster() }">
+                <div class="octocam-poster-badge">
+                    <!-- ko if: connectionState() === 'connecting' -->
+                    <i class="fa fa-circle-o-notch fa-spin octocam-spinner"></i>
+                    <!-- /ko -->
+                    <!-- ko if: connectionState() === 'error' -->
+                    <i class="fa fa-exclamation-triangle" style="color: #f87171;"></i>
+                    <!-- /ko -->
+                    <!-- ko if: connectionState() === 'idle' -->
+                    <i class="fa fa-clock-o" style="color: #94a3b8;"></i>
+                    <!-- /ko -->
+                    <span data-bind="text: posterNoticeText"></span>
+                </div>
+            </div>
+
             <video id="octocam_webrtc_video"
                    class="octocam-video-element"
                    autoplay

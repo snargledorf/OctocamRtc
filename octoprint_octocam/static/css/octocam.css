@@ -20,18 +20,79 @@
 }
 
 .octocam-rotation-container {
+    position: relative;
     width: 100%;
     height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
+    background-color: #000000;
 }
 
-.octocam-video-element {
+.octocam-poster-element {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
     display: block;
+    z-index: 1;
+    opacity: 1;
+    transition: opacity 0.35s ease-in-out;
+    pointer-events: none;
+}
+
+.octocam-poster-element.poster-hidden {
+    opacity: 0;
+}
+
+.octocam-poster-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    pointer-events: none;
+    transition: opacity 0.35s ease-in-out;
+    background: rgba(0, 0, 0, 0.25);
+}
+
+.octocam-poster-overlay.poster-hidden {
+    opacity: 0;
+}
+
+.octocam-poster-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 15px;
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 20px;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.octocam-poster-badge .octocam-spinner {
+    font-size: 13px;
+    color: #38bdf8;
+}
+
+.octocam-video-element {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    z-index: 0;
 }
 
 .octocam-overlay-bar {
@@ -43,6 +104,16 @@
     align-items: center;
     justify-content: space-between;
     pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.35s ease-in-out, visibility 0.35s ease-in-out;
+}
+
+.octocam-video-viewport:hover .octocam-overlay-bar,
+.octocam-video-viewport:focus-within .octocam-overlay-bar {
+    opacity: 1;
+    visibility: visible;
 }
 
 .octocam-badge {

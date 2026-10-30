@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -91,6 +93,8 @@ class WebRTCEngine:
 
     def __init__(self, logger_instance: Optional[logging.Logger] = None) -> None:
         self._logger = logger_instance or logger
+        self._snapshot_cache: Dict[str, Tuple[float, bytes]] = {}
+        self._cache_lock = threading.Lock()
 
     def start(self) -> None:
         """No-op for go2rtc proxy mode."""
@@ -198,8 +202,50 @@ class WebRTCEngine:
         try:
             resp = requests.get(snapshot_url, timeout=5.0)
             resp.raise_for_status()
-            return resp.content
+            content = resp.content
+            with self._cache_lock:
+                self._snapshot_cache[stream] = (time.time(), content)
+            return content
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Failed to fetch snapshot from '{snapshot_url}': {exc}"
             ) from exc
+
+    def get_cached_snapshot(
+        self, stream: str = "octocam", max_age: Optional[float] = None
+    ) -> Optional[bytes]:
+        """
+        Returns the most recently cached snapshot bytes for `stream`.
+        If `max_age` (seconds) is given, returns None if the cached snapshot is older.
+        """
+        stream_key = (stream or "octocam").strip()
+        with self._cache_lock:
+            cached = self._snapshot_cache.get(stream_key)
+            if cached is None:
+                return None
+            ts, data = cached
+            if max_age is not None and (time.time() - ts) > max_age:
+                return None
+            return data
+
+    def update_snapshot_cache(
+        self, config: EngineConfig, stream: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Fetches a fresh snapshot and updates the in-memory cache without raising exceptions."""
+        try:
+            return self.capture_snapshot(config, stream_override=stream)
+        except Exception as exc:
+            self._logger.debug(
+                "[OctoCam go2rtc] Background snapshot update failed for '%s': %s",
+                stream or config.go2rtc_stream,
+                exc,
+            )
+            return None
+
+    def clear_snapshot_cache(self, stream: Optional[str] = None) -> None:
+        """Clears the snapshot cache for a specific stream or all streams."""
+        with self._cache_lock:
+            if stream:
+                self._snapshot_cache.pop(stream, None)
+            else:
+                self._snapshot_cache.clear()

@@ -10,6 +10,10 @@ $(function () {
         self.candidateType = ko.observable(""); // host | srflx | relay | ""
         self.errorMessage = ko.observable("");
 
+        // Snapshot poster preview observables
+        self.showPoster = ko.observable(true);
+        self.posterUrl = ko.observable("");
+
         // Multi-stream observables
         self.availableStreams = ko.observableArray([]);
         self.selectedStream = ko.observable("octocam");
@@ -69,6 +73,17 @@ $(function () {
             return "badge-idle";
         });
 
+        self.posterNoticeText = ko.pureComputed(function () {
+            var state = self.connectionState();
+            if (state === "connecting") {
+                return "Loading live feed...";
+            }
+            if (state === "error") {
+                return self.errorMessage() || "Stream offline — showing recent snapshot";
+            }
+            return "Snapshot preview";
+        });
+
         // Internal WebRTC runtime fields
         self._pc = null;
         self._reconnectTimer = null;
@@ -88,8 +103,48 @@ $(function () {
             return null;
         };
 
+        // Poster & Snapshot Helpers
+        self.refreshPoster = function () {
+            var p = self._pluginSettings();
+            var stream =
+                self.selectedStream() ||
+                (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocam");
+            self.posterUrl(
+                "/plugin/octocam/snapshot?src=" +
+                    encodeURIComponent(stream) +
+                    "&t=" +
+                    Date.now()
+            );
+            self.showPoster(true);
+        };
+
+        self._bindVideoElementListeners = function (videoEl) {
+            if (!videoEl || videoEl._octocamBound) {
+                return;
+            }
+            videoEl._octocamBound = true;
+
+            // When the live video track begins rendering frames, smoothly cross-fade out the snapshot poster
+            videoEl.addEventListener("playing", function () {
+                self.showPoster(false);
+            });
+            videoEl.addEventListener("loadeddata", function () {
+                self.showPoster(false);
+            });
+            // When stream empties or stalls during reconnect, display the latest snapshot
+            videoEl.addEventListener("emptied", function () {
+                self.showPoster(true);
+            });
+            videoEl.addEventListener("waiting", function () {
+                if (self.connectionState() !== "connected") {
+                    self.showPoster(true);
+                }
+            });
+        };
+
         // Switch stream listener
         self.selectedStream.subscribe(function () {
+            self.refreshPoster();
             if (self._isVisible && self.connectionState() !== "idle") {
                 self.reconnectStream();
             }
@@ -281,6 +336,9 @@ $(function () {
             self.candidateType("");
             self.errorMessage("");
 
+            self._bindVideoElementListeners(videoEl);
+            self.refreshPoster();
+
             var p = self._pluginSettings();
             var activeStream =
                 self.selectedStream() ||
@@ -330,10 +388,15 @@ $(function () {
                 if (st === "connected") {
                     self.connectionState("connected");
                     self._reconnectAttempt = 0;
+                    if (videoEl && videoEl.readyState >= 2) {
+                        self.showPoster(false);
+                    }
                     self._inspectSelectedCandidatePair(pc);
                 } else if (st === "failed" || st === "disconnected") {
                     self.connectionState("error");
                     self.errorMessage("Connection lost — reconnecting...");
+                    self.showPoster(true);
+                    self.refreshPoster();
                     self._scheduleReconnect();
                 } else if (st === "closed") {
                     self.connectionState("idle");
@@ -470,6 +533,7 @@ $(function () {
 
         self.stopStream = function () {
             self._clearTimers();
+            self.showPoster(true);
             if (self._pc) {
                 try {
                     self._pc.close();

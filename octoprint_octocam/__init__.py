@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, Iterable, List, Optional
 
 try:
@@ -17,6 +18,7 @@ try:
     _BaseAssetPlugin = octoprint.plugin.AssetPlugin
     _BaseTemplatePlugin = octoprint.plugin.TemplatePlugin
     _BaseSimpleApiPlugin = octoprint.plugin.SimpleApiPlugin
+    _BaseBlueprintPlugin = octoprint.plugin.BlueprintPlugin
     _BaseWebcamProviderPlugin = octoprint.plugin.WebcamProviderPlugin
     _BaseShutdownPlugin = octoprint.plugin.ShutdownPlugin
 except ImportError:  # pragma: no cover - fallback for unit testing outside OctoPrint
@@ -34,6 +36,14 @@ except ImportError:  # pragma: no cover - fallback for unit testing outside Octo
 
     class _BaseSimpleApiPlugin:
         pass
+
+    class _BaseBlueprintPlugin:
+        @classmethod
+        def route(cls, rule: str, **options: Any) -> Any:
+            def decorator(f: Any) -> Any:
+                f._blueprint_route = (rule, options)
+                return f
+            return decorator
 
     class _BaseWebcamProviderPlugin:
         pass
@@ -59,6 +69,7 @@ class OctocamPlugin(
     _BaseAssetPlugin,
     _BaseTemplatePlugin,
     _BaseSimpleApiPlugin,
+    _BaseBlueprintPlugin,
     _BaseWebcamProviderPlugin,
     _BaseShutdownPlugin,
 ):
@@ -71,6 +82,8 @@ class OctocamPlugin(
         )
         self._turn_provider = TurnCredentialProvider(logger=self._logger)
         self._webrtc_engine = WebRTCEngine(logger_instance=self._logger)
+        self._snapshot_worker_thread: Optional[threading.Thread] = None
+        self._snapshot_stop_event = threading.Event()
 
     def initialize(self) -> None:
         if hasattr(super(), "initialize"):
@@ -108,6 +121,7 @@ class OctocamPlugin(
             self._logger.debug("Could not check/update defaultWebcam on startup: %s", exc)
 
         self._sync_webcam_stream_url()
+        self._start_snapshot_worker()
 
     # ~~ SettingsPlugin mixin ~~
 
@@ -119,6 +133,8 @@ class OctocamPlugin(
             "stream_url": "",
             "snapshot_url": "",
             "sync_octoprint_stream": True,
+            "snapshot_caching_enabled": True,
+            "snapshot_cache_interval": 5,
             "aspect_ratio": "16:9",  # "16:9" or "4:3"
             "cloudflare_enabled": True,
             "cloudflare_turn_key_id": "",
@@ -146,6 +162,7 @@ class OctocamPlugin(
             super().on_settings_save(data)  # type: ignore[misc]
         self._turn_provider.invalidate_cache()
         self._sync_webcam_stream_url()
+        self._restart_snapshot_worker()
 
     # ~~ AssetPlugin mixin ~~
 
@@ -290,7 +307,6 @@ class OctocamPlugin(
             return dict_configs
 
     def take_webcam_snapshot(self, provided_webcam: Any) -> Iterable[bytes]:
-        config = self._build_engine_config(include_turn=False)
         cam_name = (
             getattr(provided_webcam, "name", "")
             if not isinstance(provided_webcam, dict)
@@ -299,6 +315,17 @@ class OctocamPlugin(
         stream_override = None
         if cam_name.startswith("octocam_"):
             stream_override = cam_name[len("octocam_") :]
+
+        stream_key = (
+            stream_override
+            or str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+        )
+        # Check if we have a fresh snapshot cached (< 2.5s old)
+        cached = self._webrtc_engine.get_cached_snapshot(stream_key, max_age=2.5)
+        if cached is not None:
+            return [cached]
+
+        config = self._build_engine_config(include_turn=False)
         jpeg_bytes = self._webrtc_engine.capture_snapshot(
             config, stream_override=stream_override
         )
@@ -450,10 +477,106 @@ class OctocamPlugin(
             {"error": f"Unknown API command: {command}"}, status=400
         )
 
+    # ~~ BlueprintPlugin mixin ~~
+
+    def is_blueprint_protected(self) -> bool:
+        """Allow public access to /plugin/octocam/snapshot for browser <img> poster tags."""
+        return False
+
+    @_BaseBlueprintPlugin.route("/snapshot", methods=["GET"])
+    def snapshot_endpoint(self) -> Any:
+        """
+        Serves the latest cached or live JPEG snapshot for the requested stream.
+        Query params: ?src=<stream> or ?stream=<stream>
+        """
+        stream = None
+        if flask is not None and hasattr(flask, "request") and flask.request:
+            stream = flask.request.args.get("src") or flask.request.args.get("stream")
+        if not stream:
+            stream = str(self._settings.get(["go2rtc_stream"]) or "octocam").strip()
+
+        # 1. Try to serve directly from in-memory cache
+        jpeg_bytes = self._webrtc_engine.get_cached_snapshot(stream)
+        if not jpeg_bytes:
+            # 2. If not in cache, capture immediately from go2rtc
+            try:
+                config = self._build_engine_config(include_turn=False)
+                jpeg_bytes = self._webrtc_engine.capture_snapshot(
+                    config, stream_override=stream
+                )
+            except Exception as exc:
+                self._logger.debug(
+                    "[OctoCam] Snapshot capture unavailable for '%s': %s", stream, exc
+                )
+                if flask is not None:
+                    return flask.Response(
+                        "Snapshot unavailable", status=503, mimetype="text/plain"
+                    )
+                return b"Snapshot unavailable", 503
+
+        if flask is not None:
+            response = flask.Response(jpeg_bytes, mimetype="image/jpeg")
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+        return jpeg_bytes, 200
+
     # ~~ ShutdownPlugin mixin ~~
 
     def on_shutdown(self) -> None:
+        self._stop_snapshot_worker()
         self._webrtc_engine.stop()
+
+    # ~~ Background Snapshot Worker Helpers ~~
+
+    def _start_snapshot_worker(self) -> None:
+        if not hasattr(self, "_settings"):
+            return
+        if not bool(self._settings.get_boolean(["snapshot_caching_enabled"])):
+            return
+        if self._snapshot_worker_thread and self._snapshot_worker_thread.is_alive():
+            return
+        self._snapshot_stop_event.clear()
+        self._snapshot_worker_thread = threading.Thread(
+            target=self._snapshot_worker_loop,
+            name="OctoCamSnapshotWorker",
+            daemon=True,
+        )
+        self._snapshot_worker_thread.start()
+        self._logger.info("[OctoCam] Snapshot background caching worker started.")
+
+    def _stop_snapshot_worker(self) -> None:
+        self._snapshot_stop_event.set()
+        if self._snapshot_worker_thread and self._snapshot_worker_thread.is_alive():
+            self._snapshot_worker_thread.join(timeout=1.5)
+        self._snapshot_worker_thread = None
+        self._logger.info("[OctoCam] Snapshot background caching worker stopped.")
+
+    def _restart_snapshot_worker(self) -> None:
+        self._stop_snapshot_worker()
+        self._start_snapshot_worker()
+
+    def _snapshot_worker_loop(self) -> None:
+        while not self._snapshot_stop_event.is_set():
+            try:
+                if bool(self._settings.get_boolean(["snapshot_caching_enabled"])):
+                    config = self._build_engine_config(include_turn=False)
+                    active_stream = str(
+                        self._settings.get(["go2rtc_stream"]) or "octocam"
+                    ).strip()
+                    self._webrtc_engine.update_snapshot_cache(
+                        config, stream=active_stream
+                    )
+            except Exception as exc:
+                self._logger.debug(
+                    "[OctoCam] Snapshot cache cycle encountered error: %s", exc
+                )
+
+            interval = max(
+                1, int(self._settings.get_int(["snapshot_cache_interval"]) or 5)
+            )
+            self._snapshot_stop_event.wait(timeout=interval)
 
     # ~~ Internal Helpers ~~
 

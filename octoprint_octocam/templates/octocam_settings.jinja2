@@ -106,6 +106,33 @@
         </div>
 
         <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocam.snapshot_caching_enabled">
+                    <strong>{{ _('Enable Snapshot Background Caching (Instant Poster)') }}</strong>
+                </label>
+                <span class="help-block">
+                    {{ _('Periodically pre-fetches and caches snapshots in memory so that opening the webcam view immediately displays a recent preview while the WebRTC connection establishes.') }}
+                </span>
+            </div>
+        </div>
+
+        <div class="control-group" data-bind="visible: settingsViewModel.settings.plugins.octocam.snapshot_caching_enabled">
+            <label class="control-label" for="octocam_snapshot_cache_interval">{{ _('Cache Refresh Interval') }}</label>
+            <div class="controls">
+                <div class="input-append">
+                    <input id="octocam_snapshot_cache_interval" type="number" class="input-mini" min="1" max="60"
+                           data-bind="value: settingsViewModel.settings.plugins.octocam.snapshot_cache_interval">
+                    <span class="add-on">{{ _('sec') }}</span>
+                </div>
+                <span class="help-block">
+                    {{ _('Frequency to cycle snapshot pre-fetching (default: 5 seconds).') }}
+                </span>
+            </div>
+        </div>
+
+        <div class="control-group">
             <label class="control-label" for="octocam_aspect_ratio">{{ _('Aspect Ratio') }}</label>
             <div class="controls">
                 <select id="octocam_aspect_ratio" class="input-medium"
