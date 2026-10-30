@@ -306,6 +306,9 @@ class OctocamPlugin(
 
     # ~~ SimpleApiPlugin mixin ~~
 
+    def is_api_protected(self) -> bool:
+        return True
+
     def get_api_commands(self) -> Dict[str, List[str]]:
         return {
             "get_ice_servers": [],

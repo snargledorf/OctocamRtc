@@ -50,6 +50,7 @@ class _FakeSettings:
 class TestOctocamPlugin(unittest.TestCase):
     def test_plugin_defaults_and_restricted_paths(self) -> None:
         plugin = OctocamPlugin()
+        self.assertTrue(plugin.is_api_protected())
         defaults = plugin.get_settings_defaults()
 
         self.assertEqual(defaults["go2rtc_url"], "http://127.0.0.1:1984")
