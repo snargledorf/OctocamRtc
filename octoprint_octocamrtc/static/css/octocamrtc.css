@@ -14,7 +14,10 @@
 }
 
 .octocam-stream-frame,
-.octocamrtc-stream-frame {
+.octocamrtc-stream-frame,
+webrtc-stream,
+.octocam-stream-player,
+.octocamrtc-stream-player {
     position: relative;
     width: 100%;
     height: 100%;

@@ -59,6 +59,11 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertTrue(defaults["sync_octoprint_stream"])
         self.assertTrue(defaults["snapshot_caching_enabled"])
         self.assertEqual(defaults["snapshot_cache_interval"], 5)
+        self.assertTrue(defaults["player_autoplay"])
+        self.assertTrue(defaults["player_muted"])
+        self.assertTrue(defaults["player_controls"])
+        self.assertTrue(defaults["player_poster"])
+        self.assertTrue(defaults["player_reconnect"])
         self.assertTrue(defaults["iframe_autoplay"])
         self.assertTrue(defaults["iframe_muted"])
         self.assertTrue(defaults["iframe_controls"])
@@ -107,6 +112,21 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(payload["stream"], "nozzle_cam")
         self.assertIn("http://127.0.0.1:8080/embed?stream=nozzle_cam", payload["url"])
         self.assertIn("autoplay=true", payload["url"])
+
+    def test_plugin_api_get_script_url(self) -> None:
+        plugin = OctocamRtcPlugin()
+        plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+
+        with patch.object(
+            plugin,
+            "_json_response",
+            side_effect=lambda payload, status=200: (payload, status),
+        ):
+            payload, status = plugin.on_api_command("get_script_url", {})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["script_url"], "http://127.0.0.1:8080/webrtc-stream.js")
+        self.assertEqual(payload["gateway_url"], "http://127.0.0.1:8080")
 
     def test_plugin_api_test_gateway(self) -> None:
         plugin = OctocamRtcPlugin()

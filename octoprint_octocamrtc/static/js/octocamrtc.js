@@ -53,96 +53,192 @@ $(function () {
             return ratio === "4:3" ? "ratio-4-3" : "ratio-16-9";
         });
 
-        // Gateway Embed iFrame URL computation
-        self.iframeSrc = ko.pureComputed(function () {
+        // Gateway URL computed observable
+        self.gatewayUrl = ko.pureComputed(function () {
             var p = self._pluginSettings();
-            var gatewayUrl = (p && p.gateway_url && p.gateway_url()) ||
-                             (p && p.go2rtc_url && p.go2rtc_url()) ||
-                             "http://127.0.0.1:8080";
-            var stream = self.selectedStream() ||
-                         (p && p.go2rtc_stream ? p.go2rtc_stream() : "octocamrtc");
+            var raw = (p && p.gateway_url && p.gateway_url()) ||
+                      (p && p.go2rtc_url && p.go2rtc_url()) ||
+                      "http://127.0.0.1:8080";
+            return (raw || "").trim().replace(/\/+$/, "");
+        });
 
-            var autoplay = (p && p.iframe_autoplay !== undefined) ? Boolean(ko.unwrap(p.iframe_autoplay)) : true;
-            var muted = (p && p.iframe_muted !== undefined) ? Boolean(ko.unwrap(p.iframe_muted)) : true;
-            var controls = (p && p.iframe_controls !== undefined) ? Boolean(ko.unwrap(p.iframe_controls)) : true;
-            var poster = (p && p.iframe_poster !== undefined) ? Boolean(ko.unwrap(p.iframe_poster)) : true;
-            var fit = (p && p.iframe_fit !== undefined) ? (ko.unwrap(p.iframe_fit) || "contain") : "contain";
-            var reconnect = (p && p.iframe_reconnect !== undefined) ? Boolean(ko.unwrap(p.iframe_reconnect)) : true;
+        // HTML Boolean attribute helpers for <webrtc-stream>
+        self.autoplayAttr = ko.pureComputed(function () {
+            var p = self._pluginSettings();
+            var val = (p && p.player_autoplay !== undefined) ? ko.unwrap(p.player_autoplay) :
+                      (p && p.iframe_autoplay !== undefined) ? ko.unwrap(p.iframe_autoplay) : true;
+            return Boolean(val) ? "" : null;
+        });
 
-            var base = (gatewayUrl || "").trim().replace(/\/+$/, "");
+        self.mutedAttr = ko.pureComputed(function () {
+            var p = self._pluginSettings();
+            var val = (p && p.player_muted !== undefined) ? ko.unwrap(p.player_muted) :
+                      (p && p.iframe_muted !== undefined) ? ko.unwrap(p.iframe_muted) : true;
+            return Boolean(val) ? "" : null;
+        });
+
+        self.controlsAttr = ko.pureComputed(function () {
+            var p = self._pluginSettings();
+            var val = (p && p.player_controls !== undefined) ? ko.unwrap(p.player_controls) :
+                      (p && p.iframe_controls !== undefined) ? ko.unwrap(p.iframe_controls) : true;
+            return Boolean(val) ? "" : null;
+        });
+
+        self.posterAttr = ko.pureComputed(function () {
+            var p = self._pluginSettings();
+            var val = (p && p.player_poster !== undefined) ? ko.unwrap(p.player_poster) :
+                      (p && p.iframe_poster !== undefined) ? ko.unwrap(p.iframe_poster) : true;
+            return Boolean(val) ? "" : null;
+        });
+
+        // Backward compatibility computed for iframe URL
+        self.iframeSrc = ko.pureComputed(function () {
+            var base = self.gatewayUrl();
             if (base.indexOf("/embed") !== -1) {
                 base = base.split("/embed")[0];
             } else if (base.indexOf("/api/") !== -1) {
                 base = base.split("/api/")[0];
             }
-
-            var params = [
-                "stream=" + encodeURIComponent(stream),
-                "autoplay=" + (autoplay ? "true" : "false"),
-                "muted=" + (muted ? "true" : "false"),
-                "controls=" + (controls ? "true" : "false"),
-                "poster=" + (poster ? "true" : "false"),
-                "fit=" + encodeURIComponent(fit),
-                "reconnect=" + (reconnect ? "true" : "false")
-            ];
-
-            return base + "/embed?" + params.join("&");
+            return base + "/embed?stream=" + encodeURIComponent(self.selectedStream() || "octocamrtc");
         });
 
-        // iFrame DOM Element Helper
-        self._getIframeElement = function () {
+        // Web Component script loader
+        self.ensureWebComponentScript = function (gatewayUrl) {
+            var scriptId = "octocamrtc_webrtc_stream_script";
+            var existing = document.getElementById(scriptId);
+            var base = (gatewayUrl || "http://127.0.0.1:8080").replace(/\/+$/, "");
+            if (base.indexOf("/api/") !== -1) {
+                base = base.split("/api/")[0];
+            } else if (base.indexOf("/embed") !== -1) {
+                base = base.split("/embed")[0];
+            }
+            var targetUrl = base + "/webrtc-stream.js";
+            if (existing) {
+                if (existing.src === targetUrl) {
+                    return;
+                }
+                if (existing.parentNode) {
+                    existing.parentNode.removeChild(existing);
+                }
+            }
+            var script = document.createElement("script");
+            script.id = scriptId;
+            script.src = targetUrl;
+            script.async = true;
+            document.head.appendChild(script);
+        };
+
+        // <webrtc-stream> DOM Element Helper
+        self._getPlayerElement = function () {
             return (
-                document.getElementById("octocamrtc_stream_frame") ||
-                document.querySelector("#octocamrtc_webcam_container iframe") ||
-                document.querySelector(".octocamrtc-stream-frame")
+                document.getElementById("octocamrtc_player_element") ||
+                document.querySelector("webrtc-stream")
             );
         };
 
-        // PostMessage helper to send commands to the embedded player
-        self.sendIframeCommand = function (message) {
-            var iframe = self._getIframeElement();
-            if (iframe && iframe.contentWindow) {
-                iframe.contentWindow.postMessage(message, "*");
+        // Backward compatibility alias
+        self._getIframeElement = self._getPlayerElement;
+
+        // Custom Element Event Listeners
+        self._bindPlayerEvents = function (playerEl) {
+            if (!playerEl || playerEl._octocamrtcBound) {
+                return;
             }
+            playerEl._octocamrtcBound = true;
+
+            playerEl.addEventListener("webrtc:connected", function (e) {
+                console.log("[OctoCamRTC] Stream connected:", e.detail && e.detail.stream);
+                self.connectionState("connected");
+                self.errorMessage("");
+            });
+
+            playerEl.addEventListener("webrtc:disconnected", function () {
+                console.log("[OctoCamRTC] Stream disconnected");
+                self.connectionState("error");
+                self.errorMessage("Stream disconnected");
+            });
+
+            playerEl.addEventListener("webrtc:error", function (e) {
+                console.error("[OctoCamRTC] Stream error:", e.detail);
+                self.connectionState("error");
+                var msg = (e.detail && (e.detail.message || e.detail.error)) || "Stream error";
+                self.errorMessage(typeof msg === "string" ? msg : JSON.stringify(msg));
+            });
+
+            playerEl.addEventListener("webrtc:statuschange", function (e) {
+                console.log("[OctoCamRTC] Status changed:", e.detail && e.detail.status);
+                var status = e.detail && e.detail.status;
+                if (status === "connecting") {
+                    self.connectionState("connecting");
+                } else if (status === "connected" || status === "playing") {
+                    self.connectionState("connected");
+                    self.errorMessage("");
+                } else if (status === "disconnected" || status === "failed" || status === "error") {
+                    self.connectionState("error");
+                } else if (status === "idle" || status === "paused") {
+                    self.connectionState("idle");
+                }
+            });
         };
 
         // Player Actions
         self.playStream = function () {
-            self.sendIframeCommand({ action: "play" });
+            var el = self._getPlayerElement();
+            if (el) {
+                self._bindPlayerEvents(el);
+                if (typeof el.play === "function") {
+                    el.play();
+                }
+            }
         };
 
         self.pauseStream = function () {
-            self.sendIframeCommand({ action: "pause" });
+            var el = self._getPlayerElement();
+            if (el && typeof el.pause === "function") {
+                el.pause();
+            }
         };
 
         self.reconnectStream = function () {
-            self.sendIframeCommand({ action: "reconnect" });
+            var el = self._getPlayerElement();
+            if (el) {
+                self._bindPlayerEvents(el);
+                if (typeof el.reconnect === "function") {
+                    el.reconnect();
+                }
+            }
+        };
+
+        self.captureSnapshot = function () {
+            var el = self._getPlayerElement();
+            if (el && typeof el.captureSnapshot === "function") {
+                return el.captureSnapshot();
+            }
+            return Promise.reject(new Error("captureSnapshot not supported"));
         };
 
         self.setStream = function (streamName) {
             if (streamName) {
                 self.selectedStream(streamName);
-                self.sendIframeCommand({ action: "setStream", stream: streamName });
+                var el = self._getPlayerElement();
+                if (el) {
+                    el.setAttribute("stream", streamName);
+                    if ("stream" in el) {
+                        el.stream = streamName;
+                    }
+                }
             }
         };
 
-        self.mute = function () {
-            self.sendIframeCommand({ action: "mute" });
-        };
-
-        self.unmute = function () {
-            self.sendIframeCommand({ action: "unmute" });
-        };
-
         self.toggleFullscreen = function () {
-            var iframe = self._getIframeElement();
-            if (!iframe) {
+            var el = self._getPlayerElement();
+            if (!el) {
                 return;
             }
             if (document.fullscreenElement) {
                 document.exitFullscreen();
-            } else if (iframe.requestFullscreen) {
-                iframe.requestFullscreen();
+            } else if (el.requestFullscreen) {
+                el.requestFullscreen();
             }
         };
 
@@ -153,34 +249,12 @@ $(function () {
         // Switch stream listener
         self.selectedStream.subscribe(function (newStream) {
             if (newStream) {
-                self.sendIframeCommand({ action: "setStream", stream: newStream });
-            }
-        });
-
-        // Listen for player events from iframe
-        window.addEventListener("message", function (event) {
-            if (event.data && event.data.source === "webrtc-stream-gateway") {
-                console.log("[OctoCamRTC] Gateway player event:", event.data.event, event.data);
-                var ev = event.data.event;
-                if (ev === "connecting") {
-                    self.connectionState("connecting");
-                } else if (ev === "connected" || ev === "playing") {
-                    self.connectionState("connected");
-                    self.errorMessage("");
-                } else if (ev === "disconnected" || ev === "error") {
-                    self.connectionState("error");
-                    if (event.data.error || event.data.message) {
-                        self.errorMessage(event.data.error || event.data.message);
+                var el = self._getPlayerElement();
+                if (el) {
+                    el.setAttribute("stream", newStream);
+                    if ("stream" in el) {
+                        el.stream = newStream;
                     }
-                } else if (ev === "paused" || ev === "idle") {
-                    self.connectionState("idle");
-                }
-
-                if (event.data.candidateType) {
-                    self.candidateType(event.data.candidateType);
-                }
-                if (event.data.stream && event.data.stream !== self.selectedStream()) {
-                    self.selectedStream(event.data.stream);
                 }
             }
         });
@@ -316,6 +390,7 @@ $(function () {
         self.onBeforeBinding = function () {
             self._loadIceServersFromSettings();
             self.loadAvailableStreams();
+            self.ensureWebComponentScript(self.gatewayUrl());
         };
 
         self.onSettingsShown = function () {
@@ -335,6 +410,7 @@ $(function () {
             if (p && p.go2rtc_stream) {
                 self.selectedStream(p.go2rtc_stream());
             }
+            self.ensureWebComponentScript(self.gatewayUrl());
             if (self._isVisible) {
                 self.playStream();
             }
@@ -342,7 +418,7 @@ $(function () {
 
         self._hideUnconfiguredClassicBanner = function () {
             var classicContainer = document.getElementById("webcam_plugin_classicwebcam");
-            if (classicContainer && !classicContainer.querySelector("img, video, iframe")) {
+            if (classicContainer && !classicContainer.querySelector("img, video, iframe, webrtc-stream")) {
                 classicContainer.style.display = "none";
             }
             $("#webcam_container p, #control p").each(function () {
@@ -357,6 +433,7 @@ $(function () {
         self.onWebcamVisibilityChange = function (visible) {
             self._isVisible = Boolean(visible);
             if (visible) {
+                self.ensureWebComponentScript(self.gatewayUrl());
                 self._hideUnconfiguredClassicBanner();
                 self.playStream();
             } else {
@@ -368,6 +445,7 @@ $(function () {
         self.onAfterTabChange = function (current) {
             if (current === "#control") {
                 self._isVisible = true;
+                self.ensureWebComponentScript(self.gatewayUrl());
                 self._hideUnconfiguredClassicBanner();
                 self.playStream();
             } else if (self._isVisible && current !== "#control") {

@@ -11,6 +11,7 @@ from octoprint_octocamrtc.webrtc_engine import (
     resolve_gateway_embed_url,
     resolve_gateway_health_url,
     resolve_gateway_ice_servers_url,
+    resolve_gateway_script_url,
     resolve_gateway_snapshot_url,
     resolve_gateway_streams_url,
     resolve_gateway_webrtc_url,
@@ -58,6 +59,12 @@ class TestWebRTCEngine(unittest.TestCase):
         # Health check URL resolver
         health_url = resolve_gateway_health_url("http://127.0.0.1:8080")
         self.assertEqual(health_url, "http://127.0.0.1:8080/health")
+
+        # Gateway Web Component Script URL resolver
+        script_default = resolve_gateway_script_url("http://localhost:5000")
+        self.assertEqual(script_default, "http://localhost:5000/webrtc-stream.js")
+        script_from_api = resolve_gateway_script_url("http://127.0.0.1:8080/api/streams")
+        self.assertEqual(script_from_api, "http://127.0.0.1:8080/webrtc-stream.js")
 
         # Gateway Embed iFrame URL resolver
         embed_default = resolve_gateway_embed_url("http://localhost:5000")

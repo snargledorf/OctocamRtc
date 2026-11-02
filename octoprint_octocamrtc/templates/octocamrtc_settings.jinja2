@@ -124,15 +124,15 @@
         </div>
     </fieldset>
 
-    <!-- Section 2: Zero-JS iFrame Player Options -->
+    <!-- Section 2: <webrtc-stream> Web Component Options -->
     <fieldset>
-        <legend>{{ _('WebRTC iFrame Embed Player Options') }}</legend>
+        <legend>{{ _('WebRTC Player Options (<webrtc-stream> Web Component)') }}</legend>
 
         <div class="control-group">
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_autoplay">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.player_autoplay">
                     {{ _('Autoplay Stream') }}
                 </label>
                 <span class="help-block">
@@ -145,7 +145,7 @@
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_muted">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.player_muted">
                     {{ _('Mute Audio') }}
                 </label>
                 <span class="help-block">
@@ -158,11 +158,11 @@
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_controls">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.player_controls">
                     {{ _('Display Player Controls Bar') }}
                 </label>
                 <span class="help-block">
-                    {{ _('Shows the player controls bar (play/pause, mute, snapshot, fullscreen) in the embedded player.') }}
+                    {{ _('Shows the player controls bar (play/pause, mute, snapshot, fullscreen) in the player component.') }}
                 </span>
             </div>
         </div>
@@ -171,7 +171,7 @@
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_poster">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.player_poster">
                     {{ _('Show Snapshot Poster Fallback') }}
                 </label>
                 <span class="help-block">
@@ -181,21 +181,10 @@
         </div>
 
         <div class="control-group">
-            <label class="control-label" for="octocamrtc_iframe_fit">{{ _('Video Fit Mode') }}</label>
-            <div class="controls">
-                <select id="octocamrtc_iframe_fit" class="input-medium"
-                        data-bind="value: settingsViewModel.settings.plugins.octocamrtc.iframe_fit">
-                    <option value="contain">{{ _('Contain (Preserve aspect ratio)') }}</option>
-                    <option value="cover">{{ _('Cover (Fill player viewport)') }}</option>
-                </select>
-            </div>
-        </div>
-
-        <div class="control-group">
             <div class="controls">
                 <label class="checkbox">
                     <input type="checkbox"
-                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_reconnect">
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.player_reconnect">
                     {{ _('Automatic Reconnection') }}
                 </label>
                 <span class="help-block">

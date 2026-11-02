@@ -57,6 +57,7 @@ from octoprint_octocamrtc.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
     resolve_gateway_embed_url,
+    resolve_gateway_script_url,
     resolve_gateway_snapshot_url,
     resolve_go2rtc_mjpeg_url,
     resolve_go2rtc_snapshot_url,
@@ -138,6 +139,11 @@ class OctocamRtcPlugin(
             "snapshot_caching_enabled": True,
             "snapshot_cache_interval": 5,
             "aspect_ratio": "16:9",  # "16:9" or "4:3"
+            "player_autoplay": True,
+            "player_muted": True,
+            "player_controls": True,
+            "player_poster": True,
+            "player_reconnect": True,
             "iframe_autoplay": True,
             "iframe_muted": True,
             "iframe_controls": True,
@@ -353,6 +359,7 @@ class OctocamRtcPlugin(
             "get_ice_servers": [],
             "get_available_streams": [],
             "get_embed_url": [],
+            "get_script_url": [],
             "offer": ["sdp", "type"],
             "test_gateway": [],
             "test_go2rtc": [],
@@ -405,17 +412,46 @@ class OctocamRtcPlugin(
             embed_url = resolve_gateway_embed_url(
                 gateway_url=gateway_url,
                 stream=stream_name,
-                autoplay=bool(self._settings.get_boolean(["iframe_autoplay"])),
-                muted=bool(self._settings.get_boolean(["iframe_muted"])),
-                controls=bool(self._settings.get_boolean(["iframe_controls"])),
-                poster=bool(self._settings.get_boolean(["iframe_poster"])),
+                autoplay=bool(
+                    self._settings.get_boolean(["player_autoplay"])
+                    if self._settings.get(["player_autoplay"]) is not None
+                    else self._settings.get_boolean(["iframe_autoplay"])
+                ),
+                muted=bool(
+                    self._settings.get_boolean(["player_muted"])
+                    if self._settings.get(["player_muted"]) is not None
+                    else self._settings.get_boolean(["iframe_muted"])
+                ),
+                controls=bool(
+                    self._settings.get_boolean(["player_controls"])
+                    if self._settings.get(["player_controls"]) is not None
+                    else self._settings.get_boolean(["iframe_controls"])
+                ),
+                poster=bool(
+                    self._settings.get_boolean(["player_poster"])
+                    if self._settings.get(["player_poster"]) is not None
+                    else self._settings.get_boolean(["iframe_poster"])
+                ),
                 fit=str(self._settings.get(["iframe_fit"]) or "contain"),
-                reconnect=bool(self._settings.get_boolean(["iframe_reconnect"])),
+                reconnect=bool(
+                    self._settings.get_boolean(["player_reconnect"])
+                    if self._settings.get(["player_reconnect"]) is not None
+                    else self._settings.get_boolean(["iframe_reconnect"])
+                ),
             )
             return self._json_response(
                 {
                     "url": embed_url,
                     "stream": stream_name,
+                }
+            )
+
+        if command == "get_script_url":
+            script_url = resolve_gateway_script_url(gateway_url)
+            return self._json_response(
+                {
+                    "script_url": script_url,
+                    "gateway_url": gateway_url,
                 }
             )
 

@@ -37,6 +37,23 @@ class EngineConfig:
             self.go2rtc_stream = self.stream_name
 
 
+def resolve_gateway_script_url(gateway_url: str) -> str:
+    """
+    Resolves the URL to the webrtc-stream.js web component script on WebRtcStreamGateway.
+    Defaults to '{gateway_url}/webrtc-stream.js'.
+    """
+    raw = (gateway_url or "").strip().rstrip("/")
+    if not raw:
+        raw = "http://127.0.0.1:8080"
+    if "/api/" in raw:
+        raw = raw.split("/api/")[0]
+    elif "/embed" in raw:
+        raw = raw.split("/embed")[0]
+    elif "/webrtc-stream.js" in raw:
+        return raw
+    return f"{raw}/webrtc-stream.js"
+
+
 def resolve_gateway_embed_url(
     gateway_url: str,
     stream: str = "octocamrtc",
