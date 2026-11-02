@@ -1,6 +1,6 @@
 # OctoCamRTC (OctoPrint-OctocamRtc)
 
-**OctoCamRTC** is an OctoPrint 1.9+ `WebcamProviderPlugin` that delivers ultra-low-latency **WebRTC video streaming** and instant snapshot capture powered by a [go2rtc](https://github.com/AlexxIT/go2rtc) media server backend. It features dynamic **Cloudflare Calls TURN** credential generation, automatic **multi-stream discovery**, and an in-viewer camera switcher.
+**OctoCamRTC** is an OctoPrint 1.9+ `WebcamProviderPlugin` that delivers ultra-low-latency **WebRTC video streaming** and instant snapshot capture powered by a [webrtcstreamgateway](https://github.com/snargledorf) and [go2rtc](https://github.com/AlexxIT/go2rtc) media server backend. It features a responsive **Zero-JS iFrame Embed player**, dynamic **Cloudflare Calls TURN** credential generation, automatic **multi-stream discovery**, and an in-viewer camera switcher.
 
 ---
 
@@ -8,56 +8,108 @@
 
 OctoCamRTC uses a decoupled architecture separating media streaming from OctoPrint plugin management:
 
-- **go2rtc as the Media Engine**: Video capture (V4L2, USB, RTSP, Raspberry Pi cameras), hardware transcoding (VAAPI, NVENC, QuickSync, V4L2 M2M), and WebRTC streaming are handled directly by `go2rtc`.
-- **OctoCamRTC as the Orchestrator**: The plugin acts as a lightweight HTTP/WHEP proxy, snapshot provider, and OctoPrint webcam provider. It handles SDP negotiation, stream discovery, snapshot caching, and secure TURN credential delivery.
+- **WebRtcStreamGateway as the Media Engine & Embedded Player**: Video capture (V4L2, USB, RTSP, Raspberry Pi cameras), hardware transcoding (VAAPI, NVENC, QuickSync, V4L2 M2M), and WebRTC streaming are handled directly by the gateway. The gateway hosts a fully responsive player complete with poster fallback, live connection status badges, controls, error recovery, and auto-reconnection via `/embed`.
+- **OctoCamRTC as the Orchestrator**: The plugin embeds the Zero-JS iFrame player, connects to the parent window `postMessage` API for playback control and stream switching, and provides snapshot endpoints and OctoPrint webcam registration.
 - **Dynamic Cloudflare Calls TURN**: WebRTC ICE candidates and short-lived credentials are generated on demand via Cloudflare Calls, establishing reliable peer connections across symmetric NATs, firewalls, and Cloudflare Tunnels without opening UDP ports.
 
 ```text
   ┌─────────────────────────────────────────────────────────────┐
   │                 Web Browser / OctoPrint UI                  │
-  │  (OctoCamRTC KnockoutJS Viewmodel + HTML5 WebRTC Player)    │
+  │     (OctoCamRTC Viewmodel + Zero-JS iFrame Embed Player)    │
   └──────────────┬───────────────────────────────▲──────────────┘
-                 │ 1. Request ICE Servers        │
-                 │    & Send SDP Offer           │
+                 │ 1. postMessage Commands       │
+                 │    (play, pause, setStream)   │
                  ▼                               │ 3. Sub-second
   ┌───────────────────────────────────────────┐  │    WebRTC Stream
   │             OctoPrint Server              │  │    (via STUN / TURN)
   │  ┌─────────────────────────────────────┐  │  │
   │  │ OctoCamRTC Plugin                   │  │  │
-  │  │  - Cloudflare TURN Token Provider   ├──┼──┘
-  │  │  - WebRTC SDP Signaling Proxy       │  │
+  │  │  - Gateway Embed Configuration     ├──┼──┘
+  │  │  - Multi-stream Discovery & Sync    │  │
   │  │  - Background Snapshot Cache Worker │  │
   │  └──────────────────┬──────────────────┘  │
   └─────────────────────┼─────────────────────┘
                         │
        ┌────────────────┴────────────────┐
-       │ 2. Generate TURN     2. Proxy   │
-       │    Credentials          SDP     │
+       │ 2. Discover Streams  2. Snapshot│
        ▼                                 ▼
-┌───────────────────────────┐   ┌────────────────────────────────┐
-│   Cloudflare Calls TURN   │   │         go2rtc Server          │
-│ (Short-lived relay creds) │   │ (Media Capture & WebRTC Engine)│
-└───────────────────────────┘   └───────────────┬────────────────┘
-                                                │
-                                                ▼
-                                    ┌───────────────────────┐
-                                    │     Camera Feeds      │
-                                    │ (USB, V4L2, RTSP, Pi) │
-                                    └───────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│             WebRtcStreamGateway (e.g. port 5000/8080)          │
+│  - Responsive iFrame Player (/embed)                           │
+│  - WebRTC Streaming & Cloudflare TURN                          │
+│  - Multi-stream Media Capture & Snapshots                      │
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │     Camera Feeds      │
+                    │ (USB, V4L2, RTSP, Pi) │
+                    └───────────────────────┘
 ```
 
-### Signaling & Data Flow
+### Zero-JS iFrame Embed Player
 
-1. **ICE Resolution**: When the webcam player mounts, it requests ICE server configurations from OctoCamRTC. The plugin dynamically fetches short-lived TURN credentials from Cloudflare Calls (cached in-memory until TTL expiry).
-2. **SDP Negotiation**: The browser creates a WebRTC SDP offer and posts it to OctoCamRTC, which proxies it to go2rtc (`/api/webrtc?src=<stream>`) and returns the SDP answer.
-3. **Media Transport**: An ultra-low latency WebRTC peer connection is established directly between the browser and go2rtc (relayed through Cloudflare TURN when direct NAT traversal is blocked).
-4. **Snapshot Caching**: A background worker periodically pulls frames from go2rtc (`/api/frame.jpeg`) so new tabs and timelapse snapshot calls get instantaneous image data.
+The gateway hosts a fully responsive player complete with poster fallback, live connection status badges, controls, error recovery, and auto-reconnection:
+
+```html
+<iframe
+  src="http://localhost:5000/embed?stream=octocamrtc"
+  width="640"
+  height="360"
+  allow="autoplay; fullscreen"
+  style="border: 0; border-radius: 8px; overflow: hidden;"
+  loading="lazy">
+</iframe>
+```
+
+#### Query Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `stream` | string | Configured default | Target stream name registered in go2rtc. |
+| `autoplay` | boolean | `true` | Automatically starts playback on load. |
+| `muted` | boolean | `true` | Mutes audio (required by modern browsers for unprompted autoplay). |
+| `controls` | boolean | `true` | Displays player controls bar (play/pause, mute, snapshot, fullscreen). |
+| `poster` | boolean | `true` | Shows live cached snapshot from `/api/snapshot` while connecting. |
+| `fit` | `contain` \| `cover` | `contain` | CSS object-fit mode for video stream. |
+| `reconnect` | boolean | `true` | Automatically attempts exponential backoff reconnection on disconnection. |
+| `gateway` | string | Same-origin | Base URL of the gateway (if hosting the iframe page from a different domain). |
+
+#### Parent Window `postMessage` API
+
+The embedded iframe communicates bidirectionally with OctoPrint via standard `window.postMessage`:
+
+```javascript
+const iframe = document.querySelector('iframe');
+
+// Send commands to player
+iframe.contentWindow.postMessage({ action: 'play' }, '*');
+iframe.contentWindow.postMessage({ action: 'pause' }, '*');
+iframe.contentWindow.postMessage({ action: 'reconnect' }, '*');
+iframe.contentWindow.postMessage({ action: 'setStream', stream: 'front_door' }, '*');
+iframe.contentWindow.postMessage({ action: 'mute' }, '*');
+iframe.contentWindow.postMessage({ action: 'unmute' }, '*');
+
+// Listen to player events from iframe
+window.addEventListener('message', (event) => {
+  if (event.data?.source === 'webrtc-stream-gateway') {
+    console.log('Player event:', event.data.event, event.data);
+  }
+});
+```
 
 ---
 
 ## Key Features
 
-- **Lightweight go2rtc Backend**: Pure Python plugin with minimal dependencies (`requests`), offloading capture, encoding, and streaming to the high-performance `go2rtc` media server.
+- **Zero-JS iFrame Player Embed**: Direct integration with `webrtcstreamgateway`'s responsive player iframe, eliminating complex in-browser WebRTC negotiation code while providing poster fallback, controls, connection status badges, and exponential backoff recovery.
+- **Lightweight Gateway Backend**: Pure Python plugin with minimal dependencies (`requests`), offloading capture, encoding, and streaming to the high-performance media server.
+- **Dynamic Cloudflare Calls TURN**: Generates short-lived TURN credentials via the Cloudflare Calls API with in-memory TTL caching and automatic renewal.
+- **Automatic Multi-Stream Discovery**: Queries the gateway (`GET /api/streams`) and registers every stream as an OctoPrint webcam (`octocamrtc` and `octocamrtc_<stream>`).
+- **In-Viewer Stream Switcher**: Switch between any discovered camera stream directly from the OctoPrint webcam tab without reloading the page via `postMessage`.
+- **Instant Snapshot Background Caching**: A dedicated background worker pre-fetches snapshots (`/api/snapshot`) so opening the webcam tab immediately shows a fresh preview frame while WebRTC negotiates.
+- **Snapshot Endpoint for Timelapses & Integrations**: Exposes `/plugin/octocamrtc/snapshot?src=<stream>` for OctoPrint timelapses, Home Assistant, OctoApp, and Mobileraker.
+- **MJPEG & Snapshot URL Synchronization**: Automatically syncs OctoPrint's global stream and snapshot URLs to the gateway's native endpoints (`/api/stream.mjpeg`, `/api/snapshot`).
 - **Dynamic Cloudflare Calls TURN**: Generates short-lived TURN credentials via the Cloudflare Calls API (`/v1/turn/keys/{TURN_KEY_ID}/credentials/generate`) with in-memory TTL caching and automatic renewal.
 - **Automatic Multi-Stream Discovery**: Queries go2rtc (`GET /api/streams`) and registers every stream as an OctoPrint webcam (`octocamrtc` and `octocamrtc_<stream>`).
 - **In-Viewer Stream Switcher**: Switch between any discovered go2rtc camera stream directly from the OctoPrint webcam tab without reloading the page.

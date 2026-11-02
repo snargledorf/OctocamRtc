@@ -15,14 +15,12 @@ FILES_TO_PACKAGE = [
     "pyproject.toml",
     "setup.py",
     "octoprint_octocamrtc/__init__.py",
-    "octoprint_octocamrtc/turn_provider.py",
     "octoprint_octocamrtc/webrtc_engine.py",
     "octoprint_octocamrtc/static/css/octocamrtc.css",
     "octoprint_octocamrtc/static/js/octocamrtc.js",
     "octoprint_octocamrtc/templates/octocamrtc_settings.jinja2",
     "octoprint_octocamrtc/templates/octocamrtc_webcam.jinja2",
     "tests/test_plugin.py",
-    "tests/test_turn_provider.py",
     "tests/test_webrtc_engine.py",
 ]
 

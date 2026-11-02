@@ -53,10 +53,11 @@ except ImportError:  # pragma: no cover - fallback for unit testing outside Octo
 
 import requests
 
-from octoprint_octocamrtc.turn_provider import TurnCredentialError, TurnCredentialProvider
 from octoprint_octocamrtc.webrtc_engine import (
     EngineConfig,
     WebRTCEngine,
+    resolve_gateway_embed_url,
+    resolve_gateway_snapshot_url,
     resolve_go2rtc_mjpeg_url,
     resolve_go2rtc_snapshot_url,
     resolve_go2rtc_webrtc_url,
@@ -80,7 +81,6 @@ class OctocamRtcPlugin(
         self._logger = getattr(
             self, "_logger", logging.getLogger("octoprint.plugins.octocamrtc")
         )
-        self._turn_provider = TurnCredentialProvider(logger=self._logger)
         self._webrtc_engine = WebRTCEngine(logger_instance=self._logger)
         self._snapshot_worker_thread: Optional[threading.Thread] = None
         self._snapshot_stop_event = threading.Event()
@@ -88,20 +88,22 @@ class OctocamRtcPlugin(
     def initialize(self) -> None:
         if hasattr(super(), "initialize"):
             super().initialize()  # type: ignore[misc]
-        self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
-        self._logger.info("OctoCamRTC plugin initialized (go2rtc backend).")
+        self._logger.info("OctoCamRTC plugin initialized (WebRtcStreamGateway backend).")
 
     # ~~ StartupPlugin mixin ~~
 
     def on_after_startup(self) -> None:
-        self._turn_provider._logger = self._logger
         self._webrtc_engine._logger = self._logger
-        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984")
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        )
         go2rtc_stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc")
         self._logger.info(
-            "[OctoCamRTC] Startup configuration: go2rtc_url='%s', go2rtc_stream='%s'",
-            go2rtc_url,
+            "[OctoCamRTC] Startup configuration: gateway_url='%s', go2rtc_stream='%s'",
+            gateway_url,
             go2rtc_stream,
         )
         try:
@@ -128,7 +130,7 @@ class OctocamRtcPlugin(
     def get_settings_defaults(self) -> Dict[str, Any]:
         return {
             "webcam_name": "OctoCamRTC WebRTC",
-            "go2rtc_url": "http://127.0.0.1:1984",
+            "gateway_url": "http://127.0.0.1:8080",
             "go2rtc_stream": "octocamrtc",
             "stream_url": "",
             "snapshot_url": "",
@@ -136,10 +138,12 @@ class OctocamRtcPlugin(
             "snapshot_caching_enabled": True,
             "snapshot_cache_interval": 5,
             "aspect_ratio": "16:9",  # "16:9" or "4:3"
-            "cloudflare_enabled": True,
-            "cloudflare_turn_key_id": "",
-            "cloudflare_api_token": "",
-            "cloudflare_ttl": 3600,
+            "iframe_autoplay": True,
+            "iframe_muted": True,
+            "iframe_controls": True,
+            "iframe_poster": True,
+            "iframe_fit": "contain",  # "contain" or "cover"
+            "iframe_reconnect": True,
             "force_turn_relay": False,
             "ice_servers": [
                 {
@@ -152,15 +156,12 @@ class OctocamRtcPlugin(
 
     def get_settings_restricted_paths(self) -> Dict[str, List[List[str]]]:
         return {
-            "admin": [
-                ["cloudflare_api_token"],
-            ]
+            "admin": []
         }
 
     def on_settings_save(self, data: Dict[str, Any]) -> None:
         if hasattr(_BaseSettingsPlugin, "on_settings_save"):
             super().on_settings_save(data)  # type: ignore[misc]
-        self._turn_provider.invalidate_cache()
         self._sync_webcam_stream_url()
         self._restart_snapshot_worker()
 
@@ -194,13 +195,17 @@ class OctocamRtcPlugin(
     def get_webcam_configurations(self) -> Iterable[Any]:
         base_display_name = str(self._settings.get(["webcam_name"]) or "OctoCamRTC WebRTC")
         aspect_ratio_str = str(self._settings.get(["aspect_ratio"]) or "16:9")
-        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
         active_stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
         custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
 
-        # Query all configured streams from go2rtc so all streams are selectable in OctoPrint
-        available = self._webrtc_engine.get_available_streams(go2rtc_url)
+        # Query all configured streams from gateway so all streams are selectable in OctoPrint
+        available = self._webrtc_engine.get_available_streams(gateway_url)
         streams_to_register = list(available) if available else []
         if active_stream and active_stream not in streams_to_register:
             streams_to_register.insert(0, active_stream)
@@ -232,12 +237,12 @@ class OctocamRtcPlugin(
                 stream_display = (
                     custom_stream_url
                     if (custom_stream_url and is_primary)
-                    else resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
+                    else resolve_go2rtc_mjpeg_url(gateway_url, stream)
                 )
                 snap_display = (
                     custom_snapshot_url
                     if (custom_snapshot_url and is_primary)
-                    else resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+                    else resolve_gateway_snapshot_url(gateway_url, stream)
                 )
 
                 configs.append(
@@ -278,12 +283,12 @@ class OctocamRtcPlugin(
                 stream_display = (
                     custom_stream_url
                     if (custom_stream_url and is_primary)
-                    else resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
+                    else resolve_go2rtc_mjpeg_url(gateway_url, stream)
                 )
                 snap_display = (
                     custom_snapshot_url
                     if (custom_snapshot_url and is_primary)
-                    else resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+                    else resolve_gateway_snapshot_url(gateway_url, stream)
                 )
                 dict_configs.append(
                     {
@@ -328,8 +333,13 @@ class OctocamRtcPlugin(
             return [cached]
 
         config = self._build_engine_config(include_turn=False)
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
         jpeg_bytes = self._webrtc_engine.capture_snapshot(
-            config, stream_override=stream_override
+            config, stream_override=stream_override, gateway_url=gateway_url
         )
         return [jpeg_bytes]
 
@@ -342,35 +352,70 @@ class OctocamRtcPlugin(
         return {
             "get_ice_servers": [],
             "get_available_streams": [],
+            "get_embed_url": [],
             "offer": ["sdp", "type"],
-            "test_cloudflare": [],
+            "test_gateway": [],
             "test_go2rtc": [],
         }
 
     def on_api_command(self, command: str, data: Dict[str, Any]) -> Any:
+        gateway_url = str(
+            data.get("gateway_url")
+            or data.get("go2rtc_url")
+            or self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
+
         if command == "get_ice_servers":
-            ice_servers = self._resolve_ice_servers()
+            gateway_result = self._webrtc_engine.get_ice_servers(gateway_url)
+            ice_servers = list(gateway_result.get("iceServers", []))
+            if not ice_servers:
+                static_servers = self._settings.get(["ice_servers"]) or []
+                if isinstance(static_servers, list):
+                    ice_servers = list(static_servers)
+            force_relay = bool(
+                gateway_result.get("forceTurnRelay", False)
+                or self._settings.get_boolean(["force_turn_relay"])
+            )
             return self._json_response(
                 {
                     "iceServers": ice_servers,
-                    "forceTurnRelay": bool(
-                        self._settings.get_boolean(["force_turn_relay"])
-                    ),
+                    "forceTurnRelay": force_relay,
                 }
             )
 
         if command == "get_available_streams":
-            go2rtc_url = (
-                data.get("go2rtc_url")
-                or self._settings.get(["go2rtc_url"])
-                or "http://127.0.0.1:1984"
-            )
-            streams = self._webrtc_engine.get_available_streams(go2rtc_url)
+            streams = self._webrtc_engine.get_available_streams(gateway_url)
             selected = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc")
             return self._json_response(
                 {
                     "streams": streams,
                     "selected": selected,
+                }
+            )
+
+        if command == "get_embed_url":
+            stream_name = str(
+                data.get("stream")
+                or data.get("go2rtc_stream")
+                or self._settings.get(["go2rtc_stream"])
+                or "octocamrtc"
+            ).strip()
+            embed_url = resolve_gateway_embed_url(
+                gateway_url=gateway_url,
+                stream=stream_name,
+                autoplay=bool(self._settings.get_boolean(["iframe_autoplay"])),
+                muted=bool(self._settings.get_boolean(["iframe_muted"])),
+                controls=bool(self._settings.get_boolean(["iframe_controls"])),
+                poster=bool(self._settings.get_boolean(["iframe_poster"])),
+                fit=str(self._settings.get(["iframe_fit"]) or "contain"),
+                reconnect=bool(self._settings.get_boolean(["iframe_reconnect"])),
+            )
+            return self._json_response(
+                {
+                    "url": embed_url,
+                    "stream": stream_name,
                 }
             )
 
@@ -390,6 +435,7 @@ class OctocamRtcPlugin(
                     sdp_type=sdp_type,
                     config=config,
                     stream_override=stream_override,
+                    gateway_url=gateway_url,
                 )
                 return self._json_response(answer)
             except Exception as exc:
@@ -399,78 +445,36 @@ class OctocamRtcPlugin(
                     status=500,
                 )
 
-        if command == "test_cloudflare":
-            key_id = (
-                data.get("turn_key_id")
-                or self._settings.get(["cloudflare_turn_key_id"])
-                or ""
-            )
-            api_token = (
-                data.get("api_token")
-                or self._settings.get(["cloudflare_api_token"])
-                or ""
-            )
-            ttl = int(
-                data.get("ttl")
-                or self._settings.get_int(["cloudflare_ttl"])
-                or 3600
-            )
-            try:
-                servers = self._turn_provider.test_cloudflare_credentials(
-                    turn_key_id=key_id,
-                    api_token=api_token,
-                    ttl=ttl,
-                )
-                return self._json_response(
-                    {
-                        "ok": True,
-                        "iceServers": servers,
-                        "message": "Successfully generated short-lived Cloudflare TURN credentials.",
-                    }
-                )
-            except TurnCredentialError as exc:
-                return self._json_response(
-                    {
-                        "ok": False,
-                        "error": str(exc),
-                    },
-                    status=400,
-                )
-
-        if command == "test_go2rtc":
-            go2rtc_url = (
-                data.get("go2rtc_url")
-                or self._settings.get(["go2rtc_url"])
-                or "http://127.0.0.1:1984"
-            ).strip().rstrip("/")
-            stream_name = (
+        if command in ("test_gateway", "test_go2rtc"):
+            stream_name = str(
                 data.get("go2rtc_stream")
                 or self._settings.get(["go2rtc_stream"])
                 or "octocamrtc"
             ).strip()
-            custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
-            mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(go2rtc_url, stream_name)
 
-            available_streams = self._webrtc_engine.get_available_streams(go2rtc_url)
-            stream_found = stream_name in available_streams
-            if stream_found:
-                msg = f"Connected to go2rtc! Stream '{stream_name}' is available."
-            elif available_streams:
-                msg = (
-                    f"Connected to go2rtc, but stream '{stream_name}' was not found. "
-                    f"Available streams: {', '.join(available_streams)}"
-                )
+            health = self._webrtc_engine.check_health(gateway_url)
+            streams = self._webrtc_engine.get_available_streams(gateway_url)
+            stream_found = stream_name in streams
+            ok = health.get("ok", False) or bool(streams)
+
+            if ok and stream_found:
+                msg = f"Connected to WebRTC Stream Gateway! Stream '{stream_name}' is available."
+            elif ok and streams:
+                msg = f"Connected to WebRTC Stream Gateway, but stream '{stream_name}' was not found. Available streams: {', '.join(streams)}"
+            elif ok:
+                msg = f"Connected to WebRTC Stream Gateway at {gateway_url} (no active streams reported)."
             else:
-                msg = (
-                    f"Connected to go2rtc at {go2rtc_url}, but no streams are currently configured."
-                )
+                msg = health.get("message") or f"Failed to connect to gateway at {gateway_url}."
+
+            custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
+            mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(gateway_url, stream_name)
 
             return self._json_response(
                 {
-                    "ok": bool(available_streams),
+                    "ok": ok,
                     "stream_found": stream_found,
                     "message": msg,
-                    "streams": available_streams,
+                    "streams": streams,
                     "mjpeg_url": mjpeg_url,
                 }
             )
@@ -500,11 +504,16 @@ class OctocamRtcPlugin(
         # 1. Try to serve directly from in-memory cache
         jpeg_bytes = self._webrtc_engine.get_cached_snapshot(stream)
         if not jpeg_bytes:
-            # 2. If not in cache, capture immediately from go2rtc
+            # 2. If not in cache, capture immediately from gateway
             try:
                 config = self._build_engine_config(include_turn=False)
+                gateway_url = str(
+                    self._settings.get(["gateway_url"])
+                    or self._settings.get(["go2rtc_url"])
+                    or "http://127.0.0.1:8080"
+                ).strip()
                 jpeg_bytes = self._webrtc_engine.capture_snapshot(
-                    config, stream_override=stream
+                    config, stream_override=stream, gateway_url=gateway_url
                 )
             except Exception as exc:
                 self._logger.debug(
@@ -583,34 +592,41 @@ class OctocamRtcPlugin(
     # ~~ Internal Helpers ~~
 
     def _resolve_ice_servers(self) -> List[Dict[str, Any]]:
-        cf_enabled = bool(self._settings.get_boolean(["cloudflare_enabled"]))
-        cf_key_id = self._settings.get(["cloudflare_turn_key_id"]) or ""
-        cf_token = self._settings.get(["cloudflare_api_token"]) or ""
-        cf_ttl = int(self._settings.get_int(["cloudflare_ttl"]) or 3600)
-        static_servers = self._settings.get(["ice_servers"]) or []
-
-        return self._turn_provider.get_ice_servers(
-            cloudflare_enabled=cf_enabled,
-            cloudflare_turn_key_id=cf_key_id,
-            cloudflare_api_token=cf_token,
-            cloudflare_ttl=cf_ttl,
-            static_ice_servers=static_servers,
-        )
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
+        gateway_result = self._webrtc_engine.get_ice_servers(gateway_url)
+        servers = list(gateway_result.get("iceServers", []))
+        if not servers:
+            static_servers = self._settings.get(["ice_servers"]) or []
+            if isinstance(static_servers, list):
+                servers = list(static_servers)
+        return servers
 
     def _build_engine_config(self, include_turn: bool = True) -> EngineConfig:
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
+        stream_name = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         ice_servers = self._resolve_ice_servers() if include_turn else []
         return EngineConfig(
-            go2rtc_url=self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984",
-            go2rtc_stream=self._settings.get(["go2rtc_stream"]) or "octocamrtc",
-            stream_url=self._settings.get(["stream_url"]) or "",
-            snapshot_url=self._settings.get(["snapshot_url"]) or "",
+            gateway_url=gateway_url,
+            stream_name=stream_name,
+            stream_url=str(self._settings.get(["stream_url"]) or "").strip(),
+            snapshot_url=str(self._settings.get(["snapshot_url"]) or "").strip(),
             ice_servers=ice_servers,
+            go2rtc_url=gateway_url,
+            go2rtc_stream=stream_name,
         )
 
     def _sync_webcam_stream_url(self) -> None:
         """
         Synchronizes OctoPrint's classic/legacy webcam stream and snapshot URLs
-        with go2rtc's MJPEG stream and JPEG snapshot endpoints.
+        with WebRtcStreamGateway's MJPEG stream and JPEG snapshot endpoints.
         Allows integrations like Home Assistant to stream the camera.
         """
         if (
@@ -622,13 +638,17 @@ class OctocamRtcPlugin(
         if not bool(self._settings.get_boolean(["sync_octoprint_stream"])):
             return
 
-        go2rtc_url = str(self._settings.get(["go2rtc_url"]) or "http://127.0.0.1:1984").strip()
+        gateway_url = str(
+            self._settings.get(["gateway_url"])
+            or self._settings.get(["go2rtc_url"])
+            or "http://127.0.0.1:8080"
+        ).strip()
         stream = str(self._settings.get(["go2rtc_stream"]) or "octocamrtc").strip()
         custom_stream_url = str(self._settings.get(["stream_url"]) or "").strip()
         custom_snapshot_url = str(self._settings.get(["snapshot_url"]) or "").strip()
 
-        mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(go2rtc_url, stream)
-        snap_url = custom_snapshot_url or resolve_go2rtc_snapshot_url(go2rtc_url, stream)
+        mjpeg_url = custom_stream_url or resolve_go2rtc_mjpeg_url(gateway_url, stream)
+        snap_url = custom_snapshot_url or resolve_gateway_snapshot_url(gateway_url, stream)
 
         try:
             changed = False

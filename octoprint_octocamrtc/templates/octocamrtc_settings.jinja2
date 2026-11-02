@@ -1,35 +1,15 @@
 <form class="form-horizontal" onsubmit="return false;">
     <h3>{{ _('OctoCamRTC — WebRTC & STUN/TURN Configuration') }}</h3>
 
-    <!-- Section 1: go2rtc Server & Stream Selection -->
+    <!-- Section 1: Webcam & Stream Configuration -->
     <fieldset>
-        <legend>{{ _('go2rtc Media Server Configuration') }}</legend>
+        <legend>{{ _('Webcam & Stream Configuration') }}</legend>
 
         <div class="control-group">
             <label class="control-label" for="octocamrtc_webcam_name">{{ _('Webcam Display Name') }}</label>
             <div class="controls">
                 <input id="octocamrtc_webcam_name" type="text" class="input-xlarge"
                        data-bind="value: settingsViewModel.settings.plugins.octocamrtc.webcam_name">
-            </div>
-        </div>
-
-        <div class="control-group">
-            <label class="control-label" for="octocamrtc_go2rtc_url">{{ _('go2rtc Server URL') }}</label>
-            <div class="controls">
-                <div class="input-append">
-                    <input id="octocamrtc_go2rtc_url" type="text" class="input-xlarge"
-                           placeholder="http://127.0.0.1:1984"
-                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.go2rtc_url">
-                    <button class="btn" type="button" data-bind="click: testGo2rtcConnection, disable: isTestingGo2rtc()">
-                        <i class="fa fa-plug"></i> {{ _('Test Connection') }}
-                    </button>
-                </div>
-                <span class="help-block">
-                    {{ _('Base URL of the go2rtc server (default: http://127.0.0.1:1984).') }}
-                </span>
-                <div class="octocamrtc-status-banner octocam-status-banner" data-bind="visible: go2rtcTestMessage(), css: { 'text-success': go2rtcTestOk(), 'text-error': !go2rtcTestOk() }">
-                    <small data-bind="text: go2rtcTestMessage"></small>
-                </div>
             </div>
         </div>
 
@@ -144,82 +124,125 @@
         </div>
     </fieldset>
 
-    <!-- Section 2: Cloudflare Calls TURN Server -->
+    <!-- Section 2: Zero-JS iFrame Player Options -->
     <fieldset>
-        <legend>{{ _('Cloudflare Calls TURN Integration') }}</legend>
+        <legend>{{ _('WebRTC iFrame Embed Player Options') }}</legend>
 
         <div class="control-group">
             <div class="controls">
                 <label class="checkbox">
-                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.cloudflare_enabled">
-                    <strong>{{ _('Enable Dynamic Cloudflare TURN Credentials') }}</strong>
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_autoplay">
+                    {{ _('Autoplay Stream') }}
                 </label>
                 <span class="help-block">
-                    {{ _('Automatically generates short-lived TURN credentials via the Cloudflare Calls TURN API for both the OctoPrint host and remote browser viewers.') }}
+                    {{ _('Automatically starts playback when the webcam tab or player opens.') }}
                 </span>
             </div>
         </div>
 
-        <div data-bind="visible: settingsViewModel.settings.plugins.octocamrtc.cloudflare_enabled">
-            <div class="control-group">
-                <label class="control-label" for="octocamrtc_cf_key_id">{{ _('Cloudflare TURN Key ID') }}</label>
-                <div class="controls">
-                    <input id="octocamrtc_cf_key_id" type="text" class="input-xlarge"
-                           placeholder="e.g. 5dc9a1..."
-                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_turn_key_id">
-                    <span class="help-block">
-                        {{ _('The Cloudflare Calls App TURN Key ID created in your Cloudflare dashboard.') }}
-                    </span>
-                </div>
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_muted">
+                    {{ _('Mute Audio') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Mutes audio on stream initialization (required by modern browsers for unprompted autoplay).') }}
+                </span>
             </div>
+        </div>
 
-            <div class="control-group">
-                <label class="control-label" for="octocamrtc_cf_api_token">{{ _('Cloudflare API Token') }}</label>
-                <div class="controls">
-                    <input id="octocamrtc_cf_api_token" type="password" class="input-xlarge"
-                           placeholder="e.g. secret_token_xyz"
-                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_api_token">
-                    <span class="help-block">
-                        {{ _('API token / secret with permission to generate TURN credentials.') }}
-                    </span>
-                </div>
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_controls">
+                    {{ _('Display Player Controls Bar') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Shows the player controls bar (play/pause, mute, snapshot, fullscreen) in the embedded player.') }}
+                </span>
             </div>
+        </div>
 
-            <div class="control-group">
-                <label class="control-label" for="octocamrtc_cf_ttl">{{ _('Credential TTL (Seconds)') }}</label>
-                <div class="controls">
-                    <input id="octocamrtc_cf_ttl" type="number" min="60" max="86400" class="input-small"
-                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.cloudflare_ttl">
-                    <span class="help-inline">{{ _('Default: 3600 (1 hour). Credentials are automatically cached and renewed.') }}</span>
-                </div>
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_poster">
+                    {{ _('Show Snapshot Poster Fallback') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Displays the live cached snapshot from /api/snapshot while connecting or reconnecting.') }}
+                </span>
             </div>
+        </div>
 
-            <div class="control-group">
-                <div class="controls">
-                    <label class="checkbox">
-                        <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.force_turn_relay">
-                        {{ _('Force TURN Relay (iceTransportPolicy: relay)') }}
-                    </label>
-                    <span class="help-block">
-                        {{ _('Forces all WebRTC traffic through the TURN relay. Helpful for strict symmetric NAT or troubleshooting WAN access.') }}
-                    </span>
-                </div>
+        <div class="control-group">
+            <label class="control-label" for="octocamrtc_iframe_fit">{{ _('Video Fit Mode') }}</label>
+            <div class="controls">
+                <select id="octocamrtc_iframe_fit" class="input-medium"
+                        data-bind="value: settingsViewModel.settings.plugins.octocamrtc.iframe_fit">
+                    <option value="contain">{{ _('Contain (Preserve aspect ratio)') }}</option>
+                    <option value="cover">{{ _('Cover (Fill player viewport)') }}</option>
+                </select>
             </div>
+        </div>
 
-            <div class="control-group">
-                <div class="controls">
-                    <button class="btn" type="button" data-bind="click: testCloudflareTurn, disable: isTestingCloudflare()">
-                        <i class="fa fa-cloud"></i> {{ _('Test Cloudflare TURN Credentials') }}
-                    </button>
-                    <div class="octocamrtc-status-banner octocam-status-banner" data-bind="visible: cloudflareTestMessage(), css: { 'text-success': cloudflareTestOk(), 'text-error': !cloudflareTestOk() }">
-                        <small data-bind="text: cloudflareTestMessage"></small>
-                    </div>
-                </div>
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox"
+                           data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.iframe_reconnect">
+                    {{ _('Automatic Reconnection') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Automatically attempts exponential backoff reconnection on disconnection.') }}
+                </span>
             </div>
         </div>
     </fieldset>
 
-    <!-- Section 3: Static ICE Servers Fallback -->
+    <!-- Section 3: WebRTC Stream Gateway Configuration -->
+    <fieldset>
+        <legend>{{ _('WebRTC Stream Gateway Configuration') }}</legend>
+
+        <div class="control-group">
+            <label class="control-label" for="octocamrtc_gateway_url">{{ _('Gateway Service URL') }}</label>
+            <div class="controls">
+                <div class="input-append">
+                    <input id="octocamrtc_gateway_url" type="text" class="input-xlarge"
+                           placeholder="http://127.0.0.1:8080"
+                           data-bind="value: settingsViewModel.settings.plugins.octocamrtc.gateway_url">
+                    <button class="btn" type="button" data-bind="click: testGatewayConnection, disable: isTestingGateway()">
+                        <i class="fa fa-plug"></i> {{ _('Test Gateway Connection') }}
+                    </button>
+                </div>
+                <span class="help-block">
+                    {{ _('Base URL of the WebRtcStreamGateway service (default: http://127.0.0.1:8080).') }}
+                </span>
+                <div class="octocamrtc-status-banner octocam-status-banner" data-bind="visible: gatewayTestMessage(), css: { 'text-success': gatewayTestOk(), 'text-error': !gatewayTestOk() }">
+                    <small data-bind="text: gatewayTestMessage"></small>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div class="controls">
+                <label class="checkbox">
+                    <input type="checkbox" data-bind="checked: settingsViewModel.settings.plugins.octocamrtc.force_turn_relay">
+                    {{ _('Force TURN Relay (iceTransportPolicy: relay)') }}
+                </label>
+                <span class="help-block">
+                    {{ _('Forces all WebRTC traffic through the TURN relay. Helpful for strict symmetric NAT or troubleshooting WAN access.') }}
+                </span>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- Section 4: Static ICE Servers Fallback -->
     <fieldset>
         <legend>{{ _('Static STUN / TURN Servers (Fallback)') }}</legend>
         <span class="help-block">

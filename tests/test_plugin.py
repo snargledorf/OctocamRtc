@@ -53,17 +53,23 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertTrue(plugin.is_api_protected())
         defaults = plugin.get_settings_defaults()
 
-        self.assertEqual(defaults["go2rtc_url"], "http://127.0.0.1:1984")
+        self.assertEqual(defaults["gateway_url"], "http://127.0.0.1:8080")
         self.assertEqual(defaults["go2rtc_stream"], "octocamrtc")
         self.assertEqual(defaults["stream_url"], "")
         self.assertTrue(defaults["sync_octoprint_stream"])
         self.assertTrue(defaults["snapshot_caching_enabled"])
         self.assertEqual(defaults["snapshot_cache_interval"], 5)
-        self.assertTrue(defaults["cloudflare_enabled"])
+        self.assertTrue(defaults["iframe_autoplay"])
+        self.assertTrue(defaults["iframe_muted"])
+        self.assertTrue(defaults["iframe_controls"])
+        self.assertTrue(defaults["iframe_poster"])
+        self.assertEqual(defaults["iframe_fit"], "contain")
+        self.assertTrue(defaults["iframe_reconnect"])
+        self.assertFalse(defaults["force_turn_relay"])
         self.assertFalse(plugin.is_blueprint_protected())
 
         restricted = plugin.get_settings_restricted_paths()
-        self.assertIn(["cloudflare_api_token"], restricted["admin"])
+        self.assertEqual(restricted["admin"], [])
 
     def test_backward_compatibility_alias(self) -> None:
         self.assertIs(OctocamPlugin, OctocamRtcPlugin)
@@ -86,11 +92,53 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(payload["streams"], ["bed_cam", "nozzle_cam"])
         self.assertEqual(payload["selected"], "octocamrtc")
 
-    def test_plugin_api_test_go2rtc(self) -> None:
+    def test_plugin_api_get_embed_url(self) -> None:
         plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+
+        with patch.object(
+            plugin,
+            "_json_response",
+            side_effect=lambda payload, status=200: (payload, status),
+        ):
+            payload, status = plugin.on_api_command("get_embed_url", {"stream": "nozzle_cam"})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["stream"], "nozzle_cam")
+        self.assertIn("http://127.0.0.1:8080/embed?stream=nozzle_cam", payload["url"])
+        self.assertIn("autoplay=true", payload["url"])
+
+    def test_plugin_api_test_gateway(self) -> None:
+        plugin = OctocamRtcPlugin()
+        plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+        plugin._webrtc_engine.check_health = MagicMock(
+            return_value={"ok": True, "status_code": 200, "message": "Gateway healthy (HTTP 200)"}
+        )
         plugin._webrtc_engine.get_available_streams = MagicMock(
             return_value=["octocamrtc", "cam2"]
+        )
+
+        with patch.object(
+            plugin,
+            "_json_response",
+            side_effect=lambda payload, status=200: (payload, status),
+        ):
+            payload, status = plugin.on_api_command("test_gateway", {})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["stream_found"])
+        self.assertIn("octocamrtc", payload["streams"])
+        self.assertEqual(payload["mjpeg_url"], "http://127.0.0.1:8080/api/stream.mjpeg?src=octocamrtc")
+
+    def test_plugin_api_test_go2rtc_alias(self) -> None:
+        plugin = OctocamRtcPlugin()
+        plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+        plugin._webrtc_engine.check_health = MagicMock(
+            return_value={"ok": True, "status_code": 200, "message": "Gateway healthy (HTTP 200)"}
+        )
+        plugin._webrtc_engine.get_available_streams = MagicMock(
+            return_value=["octocamrtc"]
         )
 
         with patch.object(
@@ -103,12 +151,16 @@ class TestOctocamPlugin(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["stream_found"])
-        self.assertIn("octocamrtc", payload["streams"])
-        self.assertEqual(payload["mjpeg_url"], "http://127.0.0.1:1984/api/stream.mjpeg?src=octocamrtc")
 
     def test_plugin_api_get_ice_servers(self) -> None:
         plugin = OctocamRtcPlugin()
         plugin._settings = _FakeSettings(plugin.get_settings_defaults())
+        plugin._webrtc_engine.get_ice_servers = MagicMock(
+            return_value={
+                "iceServers": [{"urls": "turn:turn.gateway.test:3478"}],
+                "forceTurnRelay": True,
+            }
+        )
 
         with patch.object(
             plugin,
@@ -119,7 +171,8 @@ class TestOctocamPlugin(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertIn("iceServers", payload)
-        self.assertFalse(payload["forceTurnRelay"])
+        self.assertEqual(payload["iceServers"], [{"urls": "turn:turn.gateway.test:3478"}])
+        self.assertTrue(payload["forceTurnRelay"])
 
     def test_plugin_api_offer_routes_to_engine_with_stream(self) -> None:
         plugin = OctocamRtcPlugin()
@@ -142,17 +195,18 @@ class TestOctocamPlugin(unittest.TestCase):
         plugin._webrtc_engine.handle_offer.assert_called_once()
         call_kwargs = plugin._webrtc_engine.handle_offer.call_args[1]
         self.assertEqual(call_kwargs["stream_override"], "bed_cam")
+        self.assertEqual(call_kwargs["gateway_url"], "http://127.0.0.1:8080")
 
     def test_build_engine_config(self) -> None:
         plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
-        settings_data["go2rtc_url"] = "http://192.168.1.50:1984"
+        settings_data["gateway_url"] = "http://192.168.1.50:8080"
         settings_data["go2rtc_stream"] = "custom_cam"
         plugin._settings = _FakeSettings(settings_data)
 
         cfg = plugin._build_engine_config(include_turn=False)
-        self.assertEqual(cfg.go2rtc_url, "http://192.168.1.50:1984")
-        self.assertEqual(cfg.go2rtc_stream, "custom_cam")
+        self.assertEqual(cfg.gateway_url, "http://192.168.1.50:8080")
+        self.assertEqual(cfg.stream_name, "custom_cam")
 
     def test_get_webcam_configurations_registers_all_go2rtc_streams(self) -> None:
         plugin = OctocamRtcPlugin()
@@ -176,17 +230,21 @@ class TestOctocamPlugin(unittest.TestCase):
         by_name = {c["name"]: c for c in configs}
         self.assertEqual(
             by_name["octocamrtc"]["compat"]["stream"],
-            "http://127.0.0.1:1984/api/stream.mjpeg?src=bed_cam",
+            "http://127.0.0.1:8080/api/stream.mjpeg?src=bed_cam",
         )
         self.assertEqual(
             by_name["octocamrtc_nozzle_cam"]["compat"]["stream"],
-            "http://127.0.0.1:1984/api/stream.mjpeg?src=nozzle_cam",
+            "http://127.0.0.1:8080/api/stream.mjpeg?src=nozzle_cam",
+        )
+        self.assertEqual(
+            by_name["octocamrtc"]["compat"]["snapshot"],
+            "http://127.0.0.1:8080/api/snapshot?src=bed_cam",
         )
 
     def test_sync_webcam_stream_url_updates_global_settings(self) -> None:
         plugin = OctocamRtcPlugin()
         settings_data = plugin.get_settings_defaults()
-        settings_data["go2rtc_url"] = "http://192.168.1.50:1984"
+        settings_data["gateway_url"] = "http://192.168.1.50:8080"
         settings_data["go2rtc_stream"] = "main_cam"
         plugin._settings = _FakeSettings(settings_data)
 
@@ -194,15 +252,15 @@ class TestOctocamPlugin(unittest.TestCase):
 
         self.assertEqual(
             plugin._settings.global_get(["webcam", "streamUrl"]),
-            "http://192.168.1.50:1984/api/stream.mjpeg?src=main_cam",
+            "http://192.168.1.50:8080/api/stream.mjpeg?src=main_cam",
         )
         self.assertEqual(
             plugin._settings.global_get(["plugins", "classicwebcam", "stream"]),
-            "http://192.168.1.50:1984/api/stream.mjpeg?src=main_cam",
+            "http://192.168.1.50:8080/api/stream.mjpeg?src=main_cam",
         )
         self.assertEqual(
             plugin._settings.global_get(["webcam", "snapshotUrl"]),
-            "http://192.168.1.50:1984/api/frame.jpeg?src=main_cam",
+            "http://192.168.1.50:8080/api/snapshot?src=main_cam",
         )
         self.assertTrue(plugin._settings.saved)
 
@@ -234,6 +292,7 @@ class TestOctocamPlugin(unittest.TestCase):
         plugin._webrtc_engine.capture_snapshot.assert_called_once()
         call_kwargs = plugin._webrtc_engine.capture_snapshot.call_args[1]
         self.assertEqual(call_kwargs["stream_override"], "nozzle_cam")
+        self.assertEqual(call_kwargs["gateway_url"], "http://127.0.0.1:8080")
 
     def test_take_webcam_snapshot_uses_cached_if_fresh(self) -> None:
         plugin = OctocamRtcPlugin()
@@ -263,6 +322,9 @@ class TestOctocamPlugin(unittest.TestCase):
         resp, status = plugin.snapshot_endpoint()
         self.assertEqual(status, 200)
         self.assertEqual(resp, b"live_jpeg")
+        plugin._webrtc_engine.capture_snapshot.assert_called_once()
+        call_kwargs = plugin._webrtc_engine.capture_snapshot.call_args[1]
+        self.assertEqual(call_kwargs["gateway_url"], "http://127.0.0.1:8080")
 
     def test_snapshot_endpoint_failure_returns_503(self) -> None:
         plugin = OctocamRtcPlugin()

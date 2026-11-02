@@ -9,8 +9,54 @@
     position: relative;
     width: 100%;
     background-color: #111111;
-    border-radius: 4px;
+    border-radius: 8px;
     overflow: hidden;
+}
+
+.octocam-stream-frame,
+.octocamrtc-stream-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    display: block;
+}
+
+.octocam-stream-selector-bar,
+.octocamrtc-stream-selector-bar {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    opacity: 0.85;
+    transition: opacity 0.2s ease-in-out;
+}
+
+.octocam-stream-selector-bar:hover,
+.octocamrtc-stream-selector-bar:hover {
+    opacity: 1;
+}
+
+.octocamrtc-stream-select {
+    margin: 0 !important;
+    height: 22px !important;
+    font-size: 11px !important;
+    line-height: 20px !important;
+    padding: 1px 4px !important;
+    background: rgba(0, 0, 0, 0.7) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    border-radius: 3px !important;
 }
 
 .octocam-video-viewport.ratio-16-9,
